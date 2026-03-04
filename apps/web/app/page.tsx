@@ -27,6 +27,8 @@ export default function HomePage() {
   const [response, setResponse] = useState<string>('');
   const [error, setError] = useState<string>('');
   const [gamePath, setGamePath] = useState<string>('');
+  const [joinLink, setJoinLink] = useState<string>('');
+  const [copyStatus, setCopyStatus] = useState<string>('');
 
   const boardSetup: BoardSetupRequest | undefined = useMemo(() => {
     if (boardMode === 'classic') {
@@ -45,6 +47,8 @@ export default function HomePage() {
     setError('');
     setResponse('');
     setGamePath('');
+    setJoinLink('');
+    setCopyStatus('');
 
     if (!boardSetup) {
       setError('Invalid custom board JSON.');
@@ -70,7 +74,21 @@ export default function HomePage() {
     const created = json as CreateGameResponse;
     setSession(created.gameId, created.playerToken, created.side);
     setGamePath(`/game/${created.gameId}`);
+    setJoinLink(new URL(created.joinLink, window.location.origin).toString());
     setResponse(JSON.stringify(created, null, 2));
+  }
+
+  async function handleCopyJoinLink() {
+    if (!joinLink) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(joinLink);
+      setCopyStatus('Join link copied.');
+    } catch {
+      setCopyStatus('Could not copy link. Please copy manually.');
+    }
   }
 
   return (
@@ -114,6 +132,17 @@ export default function HomePage() {
             Host session saved. Open game: <a href={gamePath}>{gamePath}</a>
           </p>
         ) : null}
+        {joinLink ? (
+          <>
+            <p>
+              Share this link with opponent: <a href={joinLink}>{joinLink}</a>
+            </p>
+            <button type="button" onClick={handleCopyJoinLink}>
+              Copy join link
+            </button>
+          </>
+        ) : null}
+        {copyStatus ? <p>{copyStatus}</p> : null}
         {error ? <p>{error}</p> : null}
         {response ? <pre>{response}</pre> : null}
       </div>

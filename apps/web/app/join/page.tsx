@@ -1,6 +1,8 @@
 'use client';
 
 import { useState } from 'react';
+import { useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
 import type { JoinGameRequest, JoinGameResponse } from '@realtimechess/shared-types';
 
 function setSession(gameId: string, playerToken: string, side: 'white' | 'black'): void {
@@ -8,11 +10,25 @@ function setSession(gameId: string, playerToken: string, side: 'white' | 'black'
 }
 
 export default function JoinPage() {
+  const searchParams = useSearchParams();
   const [gameId, setGameId] = useState('');
   const [joinCode, setJoinCode] = useState('');
   const [response, setResponse] = useState('');
   const [error, setError] = useState('');
   const [gamePath, setGamePath] = useState('');
+
+  useEffect(() => {
+    const gameIdParam = searchParams.get('gameId');
+    const codeParam = searchParams.get('code');
+
+    if (gameIdParam) {
+      setGameId(gameIdParam);
+    }
+
+    if (codeParam) {
+      setJoinCode(codeParam);
+    }
+  }, [searchParams]);
 
   async function handleJoin() {
     setError('');
