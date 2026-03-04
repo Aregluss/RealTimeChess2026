@@ -23,6 +23,10 @@ import { pseudoHash } from './hash';
 import { publishGameEvent } from './realtime';
 import { storage, type GameRecord } from './storage';
 
+const GAME_ID_RE = /^g_[a-z0-9]{8}$/;
+const JOIN_CODE_RE = /^\d{6}$/;
+const SQUARE_RE = /^[a-h][1-8]$/;
+
 function generateId(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -37,6 +41,35 @@ function resolveCheckTimeoutMs(requested?: number): number {
   }
 
   return Math.min(30_000, Math.max(500, Math.floor(requested)));
+}
+
+function assertGameId(value: string): void {
+  if (!GAME_ID_RE.test(value)) {
+    throw new AppError(400, 'Invalid gameId format');
+  }
+}
+
+function assertJoinCode(value: string): void {
+  if (!JOIN_CODE_RE.test(value)) {
+    throw new AppError(400, 'Invalid join code format');
+  }
+}
+
+function assertPieceId(value: string): void {
+  if (typeof value !== 'string') {
+    throw new AppError(400, 'Invalid pieceId');
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 120) {
+    throw new AppError(400, 'Invalid pieceId length');
+  }
+}
+
+function assertTargetSquare(value: string): void {
+  if (!SQUARE_RE.test(value.toLowerCase())) {
+    throw new AppError(400, 'Invalid target square');
+  }
 }
 
 function getSideForToken(record: GameRecord, token: string): Side | null {
@@ -170,6 +203,9 @@ async function getRequiredRecord(gameId: string): Promise<GameRecord> {
 export async function createGame(input: unknown): Promise<CreateGameResponse> {
   const nowMs = Date.now();
   const request = (input ?? {}) as CreateGameRequest;
+  if (request.boardSetup?.kind === 'custom' && request.boardSetup.pieces.length > 64) {
+    throw new AppError(400, 'Custom board has too many pieces');
+  }
 
   const gameId = generateId('g');
   const whiteToken = generateId('pt');
@@ -203,7 +239,8 @@ export async function createGame(input: unknown): Promise<CreateGameResponse> {
     },
     pieceHasMoved,
     rules: {
-      checkTimeoutMs
+      checkTimeoutMs,
+      pieceCooldownMs: DEFAULT_PIECE_COOLDOWN_MS
     },
     players: {
       white: {
@@ -253,6 +290,8 @@ export async function joinGame(input: unknown): Promise<JoinGameResponse> {
   if (!request.gameId || !request.joinCode) {
     throw new AppError(400, 'gameId and joinCode are required');
   }
+  assertGameId(request.gameId);
+  assertJoinCode(request.joinCode);
 
   const record = await getRequiredRecord(request.gameId);
 
@@ -293,6 +332,7 @@ export async function joinGame(input: unknown): Promise<JoinGameResponse> {
 }
 
 export async function getGameState(gameId: string): Promise<GameState> {
+  assertGameId(gameId);
   const nowMs = Date.now();
   const record = await getRequiredRecord(gameId);
 
@@ -326,6 +366,9 @@ export async function submitMove(
   if (!request.pieceId || !request.to) {
     throw new AppError(400, 'pieceId and to are required');
   }
+  assertGameId(gameId);
+  assertPieceId(request.pieceId);
+  assertTargetSquare(request.to);
 
   const record = await getRequiredRecord(gameId);
 
@@ -371,7 +414,8 @@ export async function submitMove(
     record.state.pieceHasMoved[pieceId] = true;
     const movedPieceRef = record.state.board.pieces.find((piece) => piece.id === pieceId);
     if (movedPieceRef) {
-      record.state.cooldowns[pieceId] = nowMs + DEFAULT_PIECE_COOLDOWN_MS[movedPieceRef.type];
+      record.state.cooldowns[pieceId] =
+        nowMs + record.state.rules.pieceCooldownMs[movedPieceRef.type];
     }
   }
 

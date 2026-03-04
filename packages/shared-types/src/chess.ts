@@ -70,6 +70,7 @@ export interface GameState {
   pieceHasMoved: Record<string, boolean>;
   rules: {
     checkTimeoutMs: number;
+    pieceCooldownMs: Record<PieceType, number>;
   };
   players: {
     white: PlayerState;
