@@ -45,6 +45,28 @@ function loadSession(gameId: string): Session | null {
   }
 }
 
+function getFinishMessage(state: GameState, session: Session | null): string {
+  if (!session || !state.winner) {
+    return `Game finished (${state.finishReason ?? 'UNKNOWN'}).`;
+  }
+
+  if (state.winner === session.side) {
+    return `Victory (${state.finishReason ?? 'UNKNOWN'})`;
+  }
+
+  return `Defeat (${state.finishReason ?? 'UNKNOWN'})`;
+}
+
+function getCooldownRatio(piece: Piece, state: GameState, nowMs: number): number {
+  const until = state.cooldowns[piece.id] ?? 0;
+  if (until <= nowMs) {
+    return 0;
+  }
+
+  const total = state.rules.pieceCooldownMs[piece.type] || 1;
+  return Math.max(0, Math.min(1, (until - nowMs) / total));
+}
+
 export default function GamePage() {
   const params = useParams<{ gameId: string }>();
   const gameId = params.gameId;
@@ -55,6 +77,7 @@ export default function GamePage() {
   const [selectedPieceId, setSelectedPieceId] = useState<string | null>(null);
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
   const [busy, setBusy] = useState<boolean>(false);
+  const [nowMs, setNowMs] = useState<number>(Date.now());
 
   useEffect(() => {
     if (!gameId) {
@@ -63,6 +86,11 @@ export default function GamePage() {
 
     setSession(loadSession(gameId));
   }, [gameId]);
+
+  useEffect(() => {
+    const handle = setInterval(() => setNowMs(Date.now()), 100);
+    return () => clearInterval(handle);
+  }, []);
 
   useEffect(() => {
     if (!gameId) {
@@ -102,10 +130,6 @@ export default function GamePage() {
           // ignore malformed events
         }
       });
-
-      eventSource.onerror = () => {
-        // Keep polling fallback running.
-      };
     }
 
     const pollHandle = setInterval(loadState, 1500);
@@ -194,6 +218,8 @@ export default function GamePage() {
     void submitMove(square);
   }
 
+  const canInteract = Boolean(session && state && state.status === 'ACTIVE' && !busy);
+
   return (
     <main>
       <h1>Game {gameId}</h1>
@@ -221,36 +247,74 @@ export default function GamePage() {
       )}
       {error ? <p>{error}</p> : null}
 
-      <div className="board" aria-label="chess-board">
-        {ranks.map((rank, rankIndex) =>
-          files.map((file, fileIndex) => {
-            const square = `${file}${rank}`;
-            const piece = boardIndex.get(square);
-            const isLight = (rankIndex + fileIndex) % 2 === 0;
-            const isSelected = selectedSquare === square;
-            const isWhiteKingInCheck =
-              Boolean(state?.checkState.whiteInCheck) && whiteKingSquare === square;
-            const isBlackKingInCheck =
-              Boolean(state?.checkState.blackInCheck) && blackKingSquare === square;
-            const isInCheckSquare = isWhiteKingInCheck || isBlackKingInCheck;
+      <div className="board-wrap">
+        <div className="board" aria-label="chess-board">
+          {ranks.map((rank, rankIndex) =>
+            files.map((file, fileIndex) => {
+              const square = `${file}${rank}`;
+              const piece = boardIndex.get(square);
+              const isLight = (rankIndex + fileIndex) % 2 === 0;
+              const isSelected = selectedSquare === square;
+              const isWhiteKingInCheck =
+                Boolean(state?.checkState.whiteInCheck) && whiteKingSquare === square;
+              const isBlackKingInCheck =
+                Boolean(state?.checkState.blackInCheck) && blackKingSquare === square;
+              const isInCheckSquare = isWhiteKingInCheck || isBlackKingInCheck;
 
-            return (
-              <button
-                type="button"
-                key={square}
-                onClick={() => onSquareClick(square)}
-                className={`square ${isLight ? 'light' : 'dark'} ${isSelected ? 'selected' : ''} ${
-                  isInCheckSquare ? 'in-check' : ''
-                }`}
-                disabled={!session || busy || !state || state.status !== 'ACTIVE'}
-                title={square}
-              >
-                <span className="piece">{piece ? pieceSymbol(piece) : ''}</span>
-                <span className="coord">{square}</span>
-              </button>
-            );
-          })
-        )}
+              const cooldownRatio = piece && state ? getCooldownRatio(piece, state, nowMs) : 0;
+              const perimeter = 320;
+              const visible = perimeter * cooldownRatio;
+              const startTopCenterOffset = -perimeter * 0.125;
+
+              return (
+                <button
+                  type="button"
+                  key={square}
+                  onClick={() => onSquareClick(square)}
+                  className={`square ${isLight ? 'light' : 'dark'} ${isSelected ? 'selected' : ''} ${
+                    isInCheckSquare ? 'in-check' : ''
+                  }`}
+                  disabled={!canInteract}
+                  title={square}
+                >
+                  {cooldownRatio > 0 ? (
+                    <svg className="cooldown-rect" viewBox="0 0 100 100" aria-hidden="true">
+                      <rect
+                        x="5"
+                        y="5"
+                        width="90"
+                        height="90"
+                        fill="none"
+                        stroke="rgba(74, 158, 255, 0.95)"
+                        strokeWidth="6"
+                        strokeLinecap="round"
+                        strokeDasharray={`${visible} ${perimeter}`}
+                        strokeDashoffset={startTopCenterOffset}
+                      />
+                    </svg>
+                  ) : null}
+                  <span className="piece">{piece ? pieceSymbol(piece) : ''}</span>
+                  <span className="coord">{square}</span>
+                </button>
+              );
+            })
+          )}
+        </div>
+
+        {state?.status === 'FINISHED' ? (
+          <div className="finish-overlay" role="status" aria-live="polite">
+            <h2>{getFinishMessage(state, session)}</h2>
+            <p>
+              Winner: <strong>{state.winner ?? 'none'}</strong>
+            </p>
+            <p>
+              Reason: <strong>{state.finishReason ?? 'UNKNOWN'}</strong>
+            </p>
+            <p>
+              <a href="/">Start new game</a>
+            </p>
+          </div>
+        ) : null}
       </div>
     </main>
   );

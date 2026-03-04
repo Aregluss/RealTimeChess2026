@@ -67,6 +67,11 @@ a {
   margin-top: 16px;
 }
 
+.board-wrap {
+  position: relative;
+  width: fit-content;
+}
+
 .square {
   position: relative;
   aspect-ratio: 1 / 1;
@@ -106,4 +111,26 @@ a {
   bottom: 2px;
   font-size: 10px;
   opacity: 0.8;
+}
+
+.cooldown-rect {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.finish-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(5, 8, 12, 0.78);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  text-align: center;
+  padding: 16px;
 }
