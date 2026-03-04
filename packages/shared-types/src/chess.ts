@@ -42,7 +42,6 @@ export type GameStatus =
   | 'DISCARDED';
 
 export interface PlayerState {
-  tokenHash: string;
   connected: boolean;
   disconnectedSinceMs: number | null;
 }

@@ -122,3 +122,24 @@ Original prompt: We're going to build and deploy on free tier vercel a 2 player 
 - En passant is still not implemented.
 - Disconnect grace/forfeit flow (15s blackout) still pending.
 - No automated test suite yet for new castling/Redis/realtime behaviors.
+
+## 2026-03-04 security pass
+- Secret scan run on working tree + git history for common key/token signatures.
+  - No leaked credentials found in repository history or current files.
+- Hardened randomness:
+  - replaced `Math.random()` ID/token generation with Node crypto-based generation.
+  - join code now uses cryptographic `randomInt`.
+- Reduced sensitive state exposure:
+  - removed `tokenHash` from public `GameState.players` shape.
+  - deleted obsolete `hash.ts`.
+- Hardened Git hygiene:
+  - `.gitignore` now ignores `.env*` while allowing `.env.example`.
+  - added `.env.example` template for safe env setup.
+- Added/kept server-side input validation:
+  - gameId, joinCode, move target square, pieceId sanity checks.
+  - custom board piece count cap.
+
+## Security caveats still open
+- SSE/state endpoints are not auth-gated (gameId-based access model; acceptable for current no-account + future spectator direction, but not private-room grade).
+- No rate limiting yet on API routes.
+- No dependency vulnerability audit executed in this shell (Node unavailable in agent shell); run locally with `pnpm audit`.

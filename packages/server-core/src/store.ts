@@ -18,8 +18,8 @@ import {
   type MoveResponse,
   type Side
 } from '@realtimechess/shared-types';
+import { randomBytes, randomInt } from 'node:crypto';
 import { AppError } from './errors';
-import { pseudoHash } from './hash';
 import { publishGameEvent } from './realtime';
 import { storage, type GameRecord } from './storage';
 
@@ -28,11 +28,16 @@ const JOIN_CODE_RE = /^\d{6}$/;
 const SQUARE_RE = /^[a-h][1-8]$/;
 
 function generateId(prefix: string): string {
-  return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
+  if (prefix === 'g') {
+    const suffix = randomInt(0, 36 ** 8).toString(36).padStart(8, '0');
+    return `${prefix}_${suffix}`;
+  }
+
+  return `${prefix}_${randomBytes(18).toString('base64url')}`;
 }
 
 function generateJoinCode(): string {
-  return String(Math.floor(100000 + Math.random() * 900000));
+  return String(randomInt(100_000, 1_000_000));
 }
 
 function resolveCheckTimeoutMs(requested?: number): number {
@@ -244,7 +249,6 @@ export async function createGame(input: unknown): Promise<CreateGameResponse> {
     },
     players: {
       white: {
-        tokenHash: pseudoHash(whiteToken),
         connected: true,
         disconnectedSinceMs: null
       },
@@ -311,7 +315,6 @@ export async function joinGame(input: unknown): Promise<JoinGameResponse> {
   const blackToken = generateId('pt');
   record.blackToken = blackToken;
   record.state.players.black = {
-    tokenHash: pseudoHash(blackToken),
     connected: true,
     disconnectedSinceMs: null
   };
