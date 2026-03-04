@@ -88,9 +88,20 @@ export default function GamePage() {
   }, [gameId]);
 
   useEffect(() => {
-    const handle = setInterval(() => setNowMs(Date.now()), 100);
-    return () => clearInterval(handle);
-  }, []);
+    if (state?.status !== 'ACTIVE') {
+      setNowMs(Date.now());
+      return;
+    }
+
+    let frameId = 0;
+    const tick = () => {
+      setNowMs(Date.now());
+      frameId = requestAnimationFrame(tick);
+    };
+
+    frameId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frameId);
+  }, [state?.status]);
 
   useEffect(() => {
     if (!gameId) {
@@ -267,7 +278,6 @@ export default function GamePage() {
               const cooldownRatio =
                 piece && state && showCooldown ? getCooldownRatio(piece, state, nowMs) : 0;
               const cooldownProgress = Math.max(0, Math.min(100, cooldownRatio * 100));
-              const startTopCenterOffset = -25;
 
               return (
                 <button
@@ -282,18 +292,15 @@ export default function GamePage() {
                 >
                   {cooldownRatio > 0 ? (
                     <svg className="cooldown-rect" viewBox="0 0 100 100" aria-hidden="true">
-                      <rect
-                        x="5"
-                        y="5"
-                        width="90"
-                        height="90"
+                      <path
+                        d="M50 5 H95 V95 H5 V5 H50"
                         fill="none"
                         stroke="rgba(74, 158, 255, 0.95)"
                         strokeWidth="6"
                         strokeLinecap="round"
+                        strokeLinejoin="round"
                         pathLength="100"
                         strokeDasharray={`${cooldownProgress} 100`}
-                        strokeDashoffset={startTopCenterOffset}
                       />
                     </svg>
                   ) : null}
