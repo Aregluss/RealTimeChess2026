@@ -63,6 +63,14 @@ export interface GameState {
     whiteInCheckSinceMs: number | null;
     blackInCheckSinceMs: number | null;
   };
+  checkState: {
+    whiteInCheck: boolean;
+    blackInCheck: boolean;
+  };
+  pieceHasMoved: Record<string, boolean>;
+  rules: {
+    checkTimeoutMs: number;
+  };
   players: {
     white: PlayerState;
     black: PlayerState | null;

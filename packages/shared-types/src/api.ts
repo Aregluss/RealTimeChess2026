@@ -3,6 +3,7 @@ import { DEFAULT_PIECE_COOLDOWN_MS, GAME_TIMERS_MS } from './config';
 
 export interface CreateGameRequest {
   boardSetup?: BoardSetupRequest;
+  checkTimeoutMs?: number;
 }
 
 export interface CreateGameResponse {
@@ -43,4 +44,17 @@ export interface MoveResponse {
   version: number;
   serverReceivedAtMs: number;
   state: GameState;
+}
+
+export interface GameEventPayload {
+  type:
+    | 'game.created'
+    | 'player.joined'
+    | 'state.updated'
+    | 'game.finished'
+    | 'game.discarded';
+  gameId: string;
+  version: number;
+  state: GameState;
+  serverEventAtMs: number;
 }

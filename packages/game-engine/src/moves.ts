@@ -2,7 +2,7 @@ import type { BoardState, Piece, Side, Square } from '@realtimechess/shared-type
 import { coordToSquare, isOnBoard, squareToCoord } from './coords';
 
 export type MoveValidationResult =
-  | { ok: true; board: BoardState; movedPiece: Piece }
+  | { ok: true; board: BoardState; movedPiece: Piece; touchedPieceIds: string[] }
   | { ok: false; reason: string };
 
 function pieceAt(board: BoardState, square: Square): Piece | undefined {
@@ -59,6 +59,12 @@ function canAttackSquare(piece: Piece, board: BoardState, target: Square): boole
   }
 }
 
+export function isSquareUnderAttack(board: BoardState, square: Square, bySide: Side): boolean {
+  return board.pieces
+    .filter((piece) => piece.side === bySide)
+    .some((piece) => canAttackSquare(piece, board, square));
+}
+
 function isMovePatternLegal(piece: Piece, board: BoardState, to: Square): boolean {
   const from = squareToCoord(piece.square);
   const target = squareToCoord(to);
@@ -113,7 +119,8 @@ function applyMove(board: BoardState, piece: Piece, to: Square): BoardState {
   );
 
   const promotedType =
-    piece.type === 'pawn' && ((piece.side === 'white' && to.endsWith('8')) || (piece.side === 'black' && to.endsWith('1')))
+    piece.type === 'pawn' &&
+    ((piece.side === 'white' && to.endsWith('8')) || (piece.side === 'black' && to.endsWith('1')))
       ? 'queen'
       : piece.type;
 
@@ -130,6 +137,127 @@ function applyMove(board: BoardState, piece: Piece, to: Square): BoardState {
   };
 }
 
+function getCastlingRookInfo(king: Piece, to: Square): { rookFrom: Square; rookTo: Square } | null {
+  if (king.type !== 'king') {
+    return null;
+  }
+
+  const rank = king.side === 'white' ? '1' : '8';
+  if (king.square !== (`e${rank}` as Square)) {
+    return null;
+  }
+
+  if (to === (`g${rank}` as Square)) {
+    return {
+      rookFrom: `h${rank}` as Square,
+      rookTo: `f${rank}` as Square
+    };
+  }
+
+  if (to === (`c${rank}` as Square)) {
+    return {
+      rookFrom: `a${rank}` as Square,
+      rookTo: `d${rank}` as Square
+    };
+  }
+
+  return null;
+}
+
+function applyCastlingMove(board: BoardState, king: Piece, to: Square): { board: BoardState; rookId: string } {
+  const castlingInfo = getCastlingRookInfo(king, to);
+  if (!castlingInfo) {
+    throw new Error('Invalid castling request');
+  }
+
+  const rook = pieceAt(board, castlingInfo.rookFrom);
+  if (!rook) {
+    throw new Error('Missing rook for castling');
+  }
+
+  return {
+    board: {
+      pieces: board.pieces.map((candidate) => {
+        if (candidate.id === king.id) {
+          return { ...candidate, square: to };
+        }
+
+        if (candidate.id === rook.id) {
+          return { ...candidate, square: castlingInfo.rookTo };
+        }
+
+        return candidate;
+      })
+    },
+    rookId: rook.id
+  };
+}
+
+function validateCastling(args: {
+  board: BoardState;
+  side: Side;
+  king: Piece;
+  to: Square;
+  pieceHasMoved: Record<string, boolean>;
+}): { ok: true; board: BoardState; movedPiece: Piece; touchedPieceIds: string[] } | { ok: false; reason: string } {
+  const { board, side, king, to, pieceHasMoved } = args;
+
+  const castlingInfo = getCastlingRookInfo(king, to);
+  if (!castlingInfo) {
+    return { ok: false, reason: 'ILLEGAL_CASTLE_TARGET' };
+  }
+
+  if (pieceHasMoved[king.id]) {
+    return { ok: false, reason: 'KING_ALREADY_MOVED' };
+  }
+
+  const rook = pieceAt(board, castlingInfo.rookFrom);
+  if (!rook || rook.type !== 'rook' || rook.side !== side) {
+    return { ok: false, reason: 'CASTLING_ROOK_NOT_FOUND' };
+  }
+
+  if (pieceHasMoved[rook.id]) {
+    return { ok: false, reason: 'ROOK_ALREADY_MOVED' };
+  }
+
+  const betweenSquares =
+    to[0] === 'g'
+      ? ([castlingInfo.rookTo, `g${side === 'white' ? '1' : '8'}` as Square] as const)
+      : ([`d${side === 'white' ? '1' : '8'}` as Square, `c${side === 'white' ? '1' : '8'}` as Square, `b${side === 'white' ? '1' : '8'}` as Square] as const);
+
+  for (const square of betweenSquares) {
+    if (pieceAt(board, square)) {
+      return { ok: false, reason: 'CASTLE_PATH_BLOCKED' };
+    }
+  }
+
+  const opponent = side === 'white' ? 'black' : 'white';
+  const kingPassSquares =
+    to[0] === 'g'
+      ? ([king.square, castlingInfo.rookTo, to] as const)
+      : ([king.square, castlingInfo.rookTo, to] as const);
+
+  for (const square of kingPassSquares) {
+    if (isSquareUnderAttack(board, square, opponent)) {
+      return { ok: false, reason: 'CASTLE_THROUGH_CHECK' };
+    }
+  }
+
+  const castled = applyCastlingMove(board, king, to);
+
+  const movedKing = castled.board.pieces.find((candidate) => candidate.id === king.id);
+  if (!movedKing) {
+    return { ok: false, reason: 'INTERNAL_MOVE_ERROR' };
+  }
+
+  return {
+    ok: true,
+    board: castled.board,
+    movedPiece: movedKing,
+    touchedPieceIds: [king.id, castled.rookId]
+  };
+}
+
 export function isKingInCheck(board: BoardState, side: Side): boolean {
   const king = board.pieces.find((piece) => piece.side === side && piece.type === 'king');
   if (!king) {
@@ -137,9 +265,7 @@ export function isKingInCheck(board: BoardState, side: Side): boolean {
   }
 
   const opponent: Side = side === 'white' ? 'black' : 'white';
-  return board.pieces
-    .filter((piece) => piece.side === opponent)
-    .some((piece) => canAttackSquare(piece, board, king.square));
+  return isSquareUnderAttack(board, king.square, opponent);
 }
 
 export function validateAndApplyMove(args: {
@@ -147,8 +273,9 @@ export function validateAndApplyMove(args: {
   side: Side;
   pieceId: string;
   to: string;
+  pieceHasMoved?: Record<string, boolean>;
 }): MoveValidationResult {
-  const { board, side, pieceId, to } = args;
+  const { board, side, pieceId, to, pieceHasMoved = {} } = args;
 
   const toLower = to.toLowerCase();
   if (!/^[a-h][1-8]$/.test(toLower)) {
@@ -170,6 +297,30 @@ export function validateAndApplyMove(args: {
     return { ok: false, reason: 'NO_OP_MOVE' };
   }
 
+  const from = squareToCoord(piece.square);
+  const target = squareToCoord(targetSquare);
+  const isCastlingAttempt = piece.type === 'king' && Math.abs(target.file - from.file) === 2 && target.rank === from.rank;
+
+  if (isCastlingAttempt) {
+    const castlingResult = validateCastling({
+      board,
+      side,
+      king: piece,
+      to: targetSquare,
+      pieceHasMoved
+    });
+
+    if (!castlingResult.ok) {
+      return castlingResult;
+    }
+
+    if (isKingInCheck(castlingResult.board, side)) {
+      return { ok: false, reason: 'SELF_CHECK' };
+    }
+
+    return castlingResult;
+  }
+
   if (!isMovePatternLegal(piece, board, targetSquare)) {
     return { ok: false, reason: 'ILLEGAL_MOVE_PATTERN' };
   }
@@ -188,11 +339,16 @@ export function validateAndApplyMove(args: {
   return {
     ok: true,
     board: nextBoard,
-    movedPiece
+    movedPiece,
+    touchedPieceIds: [piece.id]
   };
 }
 
-export function hasAnyLegalMove(board: BoardState, side: Side): boolean {
+export function hasAnyLegalMove(
+  board: BoardState,
+  side: Side,
+  pieceHasMoved: Record<string, boolean> = {}
+): boolean {
   const ownPieces = board.pieces.filter((piece) => piece.side === side);
 
   for (const piece of ownPieces) {
@@ -202,7 +358,13 @@ export function hasAnyLegalMove(board: BoardState, side: Side): boolean {
           continue;
         }
         const target = coordToSquare(file, rank);
-        const result = validateAndApplyMove({ board, side, pieceId: piece.id, to: target });
+        const result = validateAndApplyMove({
+          board,
+          side,
+          pieceId: piece.id,
+          to: target,
+          pieceHasMoved
+        });
         if (result.ok) {
           return true;
         }
