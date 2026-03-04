@@ -5,8 +5,26 @@ import { useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import type { JoinGameRequest, JoinGameResponse } from '@realtimechess/shared-types';
 
+type LocalSession = {
+  playerToken: string;
+  side: 'white' | 'black';
+};
+
 function setSession(gameId: string, playerToken: string, side: 'white' | 'black'): void {
   localStorage.setItem(`rtc:session:${gameId}`, JSON.stringify({ playerToken, side }));
+}
+
+function getSession(gameId: string): LocalSession | null {
+  const raw = localStorage.getItem(`rtc:session:${gameId}`);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(raw) as LocalSession;
+  } catch {
+    return null;
+  }
 }
 
 export default function JoinPage() {
@@ -35,8 +53,17 @@ export default function JoinPage() {
     setResponse('');
     setGamePath('');
 
+    const normalizedGameId = gameId.trim();
+    const existingSession = normalizedGameId ? getSession(normalizedGameId) : null;
+    if (existingSession) {
+      setError(
+        `This browser already has a ${existingSession.side} session for this game. Use a different browser or incognito for player 2.`
+      );
+      return;
+    }
+
     const payload: JoinGameRequest = {
-      gameId: gameId.trim(),
+      gameId: normalizedGameId,
       joinCode: joinCode.trim()
     };
 
