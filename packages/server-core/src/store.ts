@@ -29,7 +29,14 @@ type GameRecord = {
   state: GameState;
 };
 
-const gamesById = new Map<string, GameRecord>();
+const globalState = globalThis as typeof globalThis & {
+  __rtcGamesById?: Map<string, GameRecord>;
+};
+
+const gamesById = globalState.__rtcGamesById ?? new Map<string, GameRecord>();
+if (process.env.NODE_ENV !== 'production') {
+  globalState.__rtcGamesById = gamesById;
+}
 
 function generateId(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
