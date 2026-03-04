@@ -1,0 +1,11 @@
+{
+  "name": "realtimechess",
+  "private": true,
+  "packageManager": "pnpm@10.30.3",
+  "scripts": {
+    "dev": "pnpm --filter @realtimechess/web dev",
+    "build": "pnpm --filter @realtimechess/web build",
+    "lint": "pnpm --filter @realtimechess/web lint",
+    "typecheck": "pnpm --filter @realtimechess/web typecheck"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "@realtimechess/server-core",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "dependencies": {
+    "@realtimechess/game-engine": "workspace:*",
+    "@realtimechess/shared-types": "workspace:*"
+  }
+}
