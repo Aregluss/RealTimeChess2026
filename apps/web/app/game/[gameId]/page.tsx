@@ -261,10 +261,13 @@ export default function GamePage() {
                 Boolean(state?.checkState.blackInCheck) && blackKingSquare === square;
               const isInCheckSquare = isWhiteKingInCheck || isBlackKingInCheck;
 
-              const cooldownRatio = piece && state ? getCooldownRatio(piece, state, nowMs) : 0;
-              const perimeter = 320;
-              const visible = perimeter * cooldownRatio;
-              const startTopCenterOffset = -perimeter * 0.125;
+              const showCooldown = Boolean(
+                piece && state && session && piece.side === session.side
+              );
+              const cooldownRatio =
+                piece && state && showCooldown ? getCooldownRatio(piece, state, nowMs) : 0;
+              const cooldownProgress = Math.max(0, Math.min(100, cooldownRatio * 100));
+              const startTopCenterOffset = -25;
 
               return (
                 <button
@@ -288,7 +291,8 @@ export default function GamePage() {
                         stroke="rgba(74, 158, 255, 0.95)"
                         strokeWidth="6"
                         strokeLinecap="round"
-                        strokeDasharray={`${visible} ${perimeter}`}
+                        pathLength="100"
+                        strokeDasharray={`${cooldownProgress} 100`}
                         strokeDashoffset={startTopCenterOffset}
                       />
                     </svg>
