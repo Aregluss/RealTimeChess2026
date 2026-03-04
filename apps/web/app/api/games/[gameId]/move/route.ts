@@ -23,7 +23,7 @@ export async function POST(
     const { gameId } = await context.params;
     const body = await request.json().catch(() => ({}));
     const token = readBearerToken(request);
-    const result = submitMove(gameId, body, token);
+    const result = await submitMove(gameId, body, token);
     return NextResponse.json(result, { status: 200 });
   } catch (error) {
     if (error instanceof AppError) {

@@ -7,6 +7,7 @@
   "types": "./src/index.ts",
   "dependencies": {
     "@realtimechess/game-engine": "workspace:*",
-    "@realtimechess/shared-types": "workspace:*"
+    "@realtimechess/shared-types": "workspace:*",
+    "ioredis": "^5.8.1"
   }
 }

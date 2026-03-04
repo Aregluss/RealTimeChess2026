@@ -10,6 +10,7 @@ import {
   GAME_TIMERS_MS,
   type CreateGameRequest,
   type CreateGameResponse,
+  type GameEventPayload,
   type GameState,
   type JoinGameRequest,
   type JoinGameResponse,
@@ -19,24 +20,8 @@ import {
 } from '@realtimechess/shared-types';
 import { AppError } from './errors';
 import { pseudoHash } from './hash';
-
-type GameRecord = {
-  gameId: string;
-  joinCode: string;
-  joinExpiresAtMs: number;
-  whiteToken: string;
-  blackToken: string | null;
-  state: GameState;
-};
-
-const globalState = globalThis as typeof globalThis & {
-  __rtcGamesById?: Map<string, GameRecord>;
-};
-
-const gamesById = globalState.__rtcGamesById ?? new Map<string, GameRecord>();
-if (process.env.NODE_ENV !== 'production') {
-  globalState.__rtcGamesById = gamesById;
-}
+import { publishGameEvent } from './realtime';
+import { storage, type GameRecord } from './storage';
 
 function generateId(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
@@ -46,29 +31,12 @@ function generateJoinCode(): string {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 
-function pruneExpiredGames(nowMs: number): void {
-  for (const [gameId, record] of gamesById) {
-    const state = record.state;
-
-    if (state.status === 'LOBBY_WAITING' && nowMs > record.joinExpiresAtMs) {
-      gamesById.delete(gameId);
-      continue;
-    }
-
-    if (state.status === 'FINISHED') {
-      if (
-        state.finishedAtServerMs &&
-        nowMs - state.finishedAtServerMs > GAME_TIMERS_MS.FINISHED_DISCARD
-      ) {
-        gamesById.delete(gameId);
-      }
-      continue;
-    }
-
-    if (nowMs - state.lastStateChangeAtServerMs > GAME_TIMERS_MS.INACTIVITY_DISCARD) {
-      gamesById.delete(gameId);
-    }
+function resolveCheckTimeoutMs(requested?: number): number {
+  if (typeof requested !== 'number' || Number.isNaN(requested)) {
+    return GAME_TIMERS_MS.CHECK_TIMEOUT;
   }
+
+  return Math.min(30_000, Math.max(500, Math.floor(requested)));
 }
 
 function getSideForToken(record: GameRecord, token: string): Side | null {
@@ -83,66 +51,135 @@ function getSideForToken(record: GameRecord, token: string): Side | null {
   return null;
 }
 
-function updateCheckStateAndTerminals(state: GameState, nowMs: number): void {
+function ttlMsForRecord(record: GameRecord, nowMs: number): number {
+  const state = record.state;
+
+  if (state.status === 'LOBBY_WAITING') {
+    return Math.max(1_000, record.joinExpiresAtMs - nowMs);
+  }
+
+  if (state.status === 'FINISHED') {
+    return GAME_TIMERS_MS.FINISHED_DISCARD;
+  }
+
+  return GAME_TIMERS_MS.INACTIVITY_DISCARD;
+}
+
+async function saveRecord(record: GameRecord, nowMs: number): Promise<void> {
+  await storage.setGameRecord(record, ttlMsForRecord(record, nowMs));
+}
+
+async function deleteRecord(record: GameRecord): Promise<void> {
+  await storage.deleteGameRecord(record.gameId);
+  await storage.deleteJoinCode(record.joinCode);
+}
+
+async function emitStateEvent(type: GameEventPayload['type'], state: GameState): Promise<void> {
+  const payload: GameEventPayload = {
+    type,
+    gameId: state.gameId,
+    version: state.version,
+    state,
+    serverEventAtMs: Date.now()
+  };
+
+  await publishGameEvent(payload);
+}
+
+function updateCheckStateAndTerminals(state: GameState, nowMs: number): boolean {
+  let changed = false;
+
   const whiteInCheck = isKingInCheck(state.board, 'white');
   const blackInCheck = isKingInCheck(state.board, 'black');
+
+  if (state.checkState.whiteInCheck !== whiteInCheck) {
+    state.checkState.whiteInCheck = whiteInCheck;
+    changed = true;
+  }
+
+  if (state.checkState.blackInCheck !== blackInCheck) {
+    state.checkState.blackInCheck = blackInCheck;
+    changed = true;
+  }
 
   if (whiteInCheck) {
     if (!state.checkTimers.whiteInCheckSinceMs) {
       state.checkTimers.whiteInCheckSinceMs = nowMs;
+      changed = true;
     }
-    if (nowMs - state.checkTimers.whiteInCheckSinceMs >= GAME_TIMERS_MS.CHECK_TIMEOUT) {
+    if (nowMs - state.checkTimers.whiteInCheckSinceMs >= state.rules.checkTimeoutMs) {
       state.status = 'FINISHED';
       state.winner = 'black';
       state.finishReason = 'CHECK_TIMEOUT';
       state.finishedAtServerMs = nowMs;
-      return;
+      changed = true;
+      return changed;
     }
-  } else {
+  } else if (state.checkTimers.whiteInCheckSinceMs !== null) {
     state.checkTimers.whiteInCheckSinceMs = null;
+    changed = true;
   }
 
   if (blackInCheck) {
     if (!state.checkTimers.blackInCheckSinceMs) {
       state.checkTimers.blackInCheckSinceMs = nowMs;
+      changed = true;
     }
-    if (nowMs - state.checkTimers.blackInCheckSinceMs >= GAME_TIMERS_MS.CHECK_TIMEOUT) {
+    if (nowMs - state.checkTimers.blackInCheckSinceMs >= state.rules.checkTimeoutMs) {
       state.status = 'FINISHED';
       state.winner = 'white';
       state.finishReason = 'CHECK_TIMEOUT';
       state.finishedAtServerMs = nowMs;
-      return;
+      changed = true;
+      return changed;
     }
-  } else {
+  } else if (state.checkTimers.blackInCheckSinceMs !== null) {
     state.checkTimers.blackInCheckSinceMs = null;
+    changed = true;
   }
 
-  // Optional fallback: if a side has no legal moves and is in check, close as timeout-like loss.
-  // This preserves progress even before full checkmate/stalemate policy is added.
-  if (whiteInCheck && !hasAnyLegalMove(state.board, 'white')) {
+  if (whiteInCheck && !hasAnyLegalMove(state.board, 'white', state.pieceHasMoved)) {
     state.status = 'FINISHED';
     state.winner = 'black';
     state.finishReason = 'NO_ESCAPE';
     state.finishedAtServerMs = nowMs;
-    return;
+    changed = true;
+    return changed;
   }
 
-  if (blackInCheck && !hasAnyLegalMove(state.board, 'black')) {
+  if (blackInCheck && !hasAnyLegalMove(state.board, 'black', state.pieceHasMoved)) {
     state.status = 'FINISHED';
     state.winner = 'white';
     state.finishReason = 'NO_ESCAPE';
     state.finishedAtServerMs = nowMs;
+    changed = true;
   }
+
+  return changed;
 }
 
-export function createGame(input: unknown): CreateGameResponse {
-  const nowMs = Date.now();
-  pruneExpiredGames(nowMs);
+async function getRequiredRecord(gameId: string): Promise<GameRecord> {
+  const record = await storage.getGameRecord(gameId);
+  if (!record) {
+    throw new AppError(404, 'Game not found');
+  }
 
+  return record;
+}
+
+export async function createGame(input: unknown): Promise<CreateGameResponse> {
+  const nowMs = Date.now();
   const request = (input ?? {}) as CreateGameRequest;
+
   const gameId = generateId('g');
   const whiteToken = generateId('pt');
   const board = createBoardFromSetup(request.boardSetup);
+  const checkTimeoutMs = resolveCheckTimeoutMs(request.checkTimeoutMs);
+
+  const pieceHasMoved: Record<string, boolean> = {};
+  for (const piece of board.pieces) {
+    pieceHasMoved[piece.id] = false;
+  }
 
   const state: GameState = {
     gameId,
@@ -160,6 +197,14 @@ export function createGame(input: unknown): CreateGameResponse {
       whiteInCheckSinceMs: null,
       blackInCheckSinceMs: null
     },
+    checkState: {
+      whiteInCheck: false,
+      blackInCheck: false
+    },
+    pieceHasMoved,
+    rules: {
+      checkTimeoutMs
+    },
     players: {
       white: {
         tokenHash: pseudoHash(whiteToken),
@@ -173,14 +218,18 @@ export function createGame(input: unknown): CreateGameResponse {
   const joinCode = generateJoinCode();
   const joinExpiresAtMs = nowMs + GAME_TIMERS_MS.JOIN_CODE_TTL;
 
-  gamesById.set(gameId, {
+  const record: GameRecord = {
     gameId,
     joinCode,
     joinExpiresAtMs,
     whiteToken,
     blackToken: null,
     state
-  });
+  };
+
+  await saveRecord(record, nowMs);
+  await storage.setJoinCode(joinCode, { gameId }, GAME_TIMERS_MS.JOIN_CODE_TTL);
+  await emitStateEvent('game.created', state);
 
   return {
     gameId,
@@ -197,22 +246,18 @@ export function createGame(input: unknown): CreateGameResponse {
   };
 }
 
-export function joinGame(input: unknown): JoinGameResponse {
+export async function joinGame(input: unknown): Promise<JoinGameResponse> {
   const nowMs = Date.now();
-  pruneExpiredGames(nowMs);
-
   const request = (input ?? {}) as JoinGameRequest;
+
   if (!request.gameId || !request.joinCode) {
     throw new AppError(400, 'gameId and joinCode are required');
   }
 
-  const record = gamesById.get(request.gameId);
-  if (!record) {
-    throw new AppError(404, 'Game not found');
-  }
+  const record = await getRequiredRecord(request.gameId);
 
   if (nowMs > record.joinExpiresAtMs) {
-    gamesById.delete(request.gameId);
+    await deleteRecord(record);
     throw new AppError(410, 'Join code expired');
   }
 
@@ -235,6 +280,10 @@ export function joinGame(input: unknown): JoinGameResponse {
   record.state.lastStateChangeAtServerMs = nowMs;
   record.state.version += 1;
 
+  await saveRecord(record, nowMs);
+  await storage.deleteJoinCode(record.joinCode);
+  await emitStateEvent('player.joined', record.state);
+
   return {
     gameId: request.gameId,
     playerToken: blackToken,
@@ -243,26 +292,30 @@ export function joinGame(input: unknown): JoinGameResponse {
   };
 }
 
-export function getGameState(gameId: string): GameState {
+export async function getGameState(gameId: string): Promise<GameState> {
   const nowMs = Date.now();
-  pruneExpiredGames(nowMs);
-
-  const record = gamesById.get(gameId);
-  if (!record) {
-    throw new AppError(404, 'Game not found');
-  }
+  const record = await getRequiredRecord(gameId);
 
   if (record.state.status === 'ACTIVE') {
-    updateCheckStateAndTerminals(record.state, nowMs);
+    const changed = updateCheckStateAndTerminals(record.state, nowMs);
+    if (changed) {
+      await saveRecord(record, nowMs);
+      await emitStateEvent(
+        record.state.status === 'FINISHED' ? 'game.finished' : 'state.updated',
+        record.state
+      );
+    }
   }
 
   return record.state;
 }
 
-export function submitMove(gameId: string, input: unknown, authToken?: string): MoveResponse {
+export async function submitMove(
+  gameId: string,
+  input: unknown,
+  authToken?: string
+): Promise<MoveResponse> {
   const nowMs = Date.now();
-  pruneExpiredGames(nowMs);
-
   const request = (input ?? {}) as MoveRequest;
   const token = authToken ?? request.playerToken;
 
@@ -274,10 +327,7 @@ export function submitMove(gameId: string, input: unknown, authToken?: string): 
     throw new AppError(400, 'pieceId and to are required');
   }
 
-  const record = gamesById.get(gameId);
-  if (!record) {
-    throw new AppError(404, 'Game not found');
-  }
+  const record = await getRequiredRecord(gameId);
 
   const side = getSideForToken(record, token);
   if (!side) {
@@ -304,7 +354,8 @@ export function submitMove(gameId: string, input: unknown, authToken?: string): 
     board: record.state.board,
     side,
     pieceId: request.pieceId,
-    to: request.to
+    to: request.to,
+    pieceHasMoved: record.state.pieceHasMoved
   });
 
   if (!moveResult.ok) {
@@ -316,10 +367,21 @@ export function submitMove(gameId: string, input: unknown, authToken?: string): 
   record.state.lastStateChangeAtServerMs = nowMs;
   record.state.version += 1;
 
-  const movedPiece = moveResult.movedPiece;
-  record.state.cooldowns[movedPiece.id] = nowMs + DEFAULT_PIECE_COOLDOWN_MS[movedPiece.type];
+  for (const pieceId of moveResult.touchedPieceIds) {
+    record.state.pieceHasMoved[pieceId] = true;
+    const movedPieceRef = record.state.board.pieces.find((piece) => piece.id === pieceId);
+    if (movedPieceRef) {
+      record.state.cooldowns[pieceId] = nowMs + DEFAULT_PIECE_COOLDOWN_MS[movedPieceRef.type];
+    }
+  }
 
   updateCheckStateAndTerminals(record.state, nowMs);
+
+  await saveRecord(record, nowMs);
+  await emitStateEvent(
+    record.state.status === 'FINISHED' ? 'game.finished' : 'state.updated',
+    record.state
+  );
 
   return {
     accepted: true,

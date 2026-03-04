@@ -7,7 +7,7 @@ export async function GET(
 ) {
   try {
     const { gameId } = await context.params;
-    const state = getGameState(gameId);
+    const state = await getGameState(gameId);
     return NextResponse.json(state, { status: 200 });
   } catch (error) {
     if (error instanceof AppError) {

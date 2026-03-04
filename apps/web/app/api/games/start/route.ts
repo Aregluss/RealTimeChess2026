@@ -4,7 +4,7 @@ import { createGame, AppError } from '@realtimechess/server-core';
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
-    const created = createGame(body);
+    const created = await createGame(body);
     return NextResponse.json(created, { status: 201 });
   } catch (error) {
     if (error instanceof AppError) {
