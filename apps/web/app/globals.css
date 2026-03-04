@@ -95,6 +95,11 @@ a {
   z-index: 1;
 }
 
+.square.in-check {
+  outline: 3px solid #e74c3c;
+  z-index: 2;
+}
+
 .square .coord {
   position: absolute;
   left: 4px;

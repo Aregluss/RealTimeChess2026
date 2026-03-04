@@ -89,3 +89,36 @@ Original prompt: We're going to build and deploy on free tier vercel a 2 player 
 - Castling and en passant are not implemented yet.
 - Disconnect grace/forfeit flow is not implemented yet.
 - Redis persistence is not implemented yet (in-memory store still used).
+
+## 2026-03-04 implementation iteration 3 (Redis + realtime + castling)
+- Added Redis-backed persistence with memory fallback:
+  - new `packages/server-core/src/storage.ts`
+  - uses `REDIS_URL` when present; otherwise uses in-memory adapter.
+  - persisted records include join code + player tokens + authoritative state.
+- Refactored server core APIs to async storage calls:
+  - `createGame`, `joinGame`, `getGameState`, `submitMove` are now async.
+  - API routes updated to `await` these calls.
+- Added realtime channel plumbing:
+  - new `packages/server-core/src/realtime.ts`
+  - publishes game events on create/join/move/finish.
+  - Redis pub/sub used when `REDIS_URL` exists; in-memory emitter fallback otherwise.
+  - new SSE endpoint: `GET /api/games/[gameId]/events`.
+- UI now consumes realtime stream:
+  - game page subscribes via `EventSource` and updates state from server events.
+  - polling fallback remains (1.5s).
+- Added per-game check timeout config:
+  - `CreateGameRequest.checkTimeoutMs` (validated server-side with bounds).
+  - creator UI now has `Check timeout (ms)` input.
+  - active timeout displayed on game page.
+- Added core castling support in game engine:
+  - king-side and queen-side castling rules with path and attacked-square checks.
+  - castling blocked if king/rook has moved.
+  - castling updates both king and rook movement state/cooldowns.
+- Added explicit check state in authoritative game state:
+  - `checkState.whiteInCheck/blackInCheck`.
+  - board UI highlights checked king square with red border.
+
+## Remaining gaps after iteration 3
+- En passant is still not implemented.
+- Disconnect grace/forfeit flow (15s blackout) still pending.
+- No automated test suite yet for new castling/Redis/realtime behaviors.

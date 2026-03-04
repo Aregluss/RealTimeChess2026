@@ -61,8 +61,7 @@ export default function GamePage() {
       return;
     }
 
-    const sess = loadSession(gameId);
-    setSession(sess);
+    setSession(loadSession(gameId));
   }, [gameId]);
 
   useEffect(() => {
@@ -90,11 +89,31 @@ export default function GamePage() {
     }
 
     loadState();
-    const handle = setInterval(loadState, 500);
+
+    let eventSource: EventSource | null = null;
+    if (typeof window !== 'undefined' && 'EventSource' in window) {
+      eventSource = new EventSource(`/api/games/${gameId}/events`);
+      eventSource.addEventListener('state', (event) => {
+        try {
+          const payload = JSON.parse((event as MessageEvent<string>).data) as GameState;
+          setState(payload);
+          setError('');
+        } catch {
+          // ignore malformed events
+        }
+      });
+
+      eventSource.onerror = () => {
+        // Keep polling fallback running.
+      };
+    }
+
+    const pollHandle = setInterval(loadState, 1500);
 
     return () => {
       active = false;
-      clearInterval(handle);
+      clearInterval(pollHandle);
+      eventSource?.close();
     };
   }, [gameId]);
 
@@ -105,6 +124,16 @@ export default function GamePage() {
     }
     return index;
   }, [state]);
+
+  const whiteKingSquare = useMemo(
+    () => state?.board.pieces.find((piece) => piece.side === 'white' && piece.type === 'king')?.square,
+    [state]
+  );
+
+  const blackKingSquare = useMemo(
+    () => state?.board.pieces.find((piece) => piece.side === 'black' && piece.type === 'king')?.square,
+    [state]
+  );
 
   async function submitMove(toSquare: string): Promise<void> {
     if (!state || !session || !selectedPieceId) {
@@ -179,7 +208,8 @@ export default function GamePage() {
       )}
       {state ? (
         <p>
-          Status: <strong>{state.status}</strong> | Version: <strong>{state.version}</strong>
+          Status: <strong>{state.status}</strong> | Version: <strong>{state.version}</strong> |
+          Check timeout: <strong>{state.rules.checkTimeoutMs}ms</strong>
         </p>
       ) : null}
       {selectedPieceId ? (
@@ -198,13 +228,20 @@ export default function GamePage() {
             const piece = boardIndex.get(square);
             const isLight = (rankIndex + fileIndex) % 2 === 0;
             const isSelected = selectedSquare === square;
+            const isWhiteKingInCheck =
+              Boolean(state?.checkState.whiteInCheck) && whiteKingSquare === square;
+            const isBlackKingInCheck =
+              Boolean(state?.checkState.blackInCheck) && blackKingSquare === square;
+            const isInCheckSquare = isWhiteKingInCheck || isBlackKingInCheck;
 
             return (
               <button
                 type="button"
                 key={square}
                 onClick={() => onSquareClick(square)}
-                className={`square ${isLight ? 'light' : 'dark'} ${isSelected ? 'selected' : ''}`}
+                className={`square ${isLight ? 'light' : 'dark'} ${isSelected ? 'selected' : ''} ${
+                  isInCheckSquare ? 'in-check' : ''
+                }`}
                 disabled={!session || busy || !state || state.status !== 'ACTIVE'}
                 title={square}
               >

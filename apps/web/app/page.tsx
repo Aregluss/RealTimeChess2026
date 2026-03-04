@@ -29,6 +29,7 @@ export default function HomePage() {
   const [gamePath, setGamePath] = useState<string>('');
   const [joinLink, setJoinLink] = useState<string>('');
   const [copyStatus, setCopyStatus] = useState<string>('');
+  const [checkTimeoutMs, setCheckTimeoutMs] = useState<string>('2000');
 
   const boardSetup: BoardSetupRequest | undefined = useMemo(() => {
     if (boardMode === 'classic') {
@@ -56,7 +57,8 @@ export default function HomePage() {
     }
 
     const payload: CreateGameRequest = {
-      boardSetup
+      boardSetup,
+      checkTimeoutMs: Number(checkTimeoutMs)
     };
 
     const res = await fetch('/api/games/start', {
@@ -122,6 +124,17 @@ export default function HomePage() {
             />
           </>
         ) : null}
+
+        <label htmlFor="checkTimeoutMs">Check timeout (milliseconds)</label>
+        <input
+          id="checkTimeoutMs"
+          type="number"
+          min={500}
+          max={30000}
+          step={100}
+          value={checkTimeoutMs}
+          onChange={(event) => setCheckTimeoutMs(event.target.value)}
+        />
 
         <button type="button" onClick={handleCreateGame}>
           Start game
