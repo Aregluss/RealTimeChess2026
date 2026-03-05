@@ -85,9 +85,12 @@ export default function GamePage() {
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
   const [busy, setBusy] = useState<boolean>(false);
   const [nowMs, setNowMs] = useState<number>(Date.now());
+  const [inviteLink, setInviteLink] = useState<string>('');
+  const [shareStatus, setShareStatus] = useState<string>('');
+  const [pregameLabel, setPregameLabel] = useState<string>('');
   const previousStateRef = useRef<GameState | null>(null);
   const pendingOwnMoveVersionRef = useRef<number | null>(null);
-  const gameStartPlayedRef = useRef<boolean>(false);
+  const gameStartSignalMsRef = useRef<number | null>(null);
   const audioRef = useRef<{
     gameStart: HTMLAudioElement | null;
     moveSelf: HTMLAudioElement | null;
@@ -121,6 +124,17 @@ export default function GamePage() {
 
     setSession(loadSession(gameId));
   }, [gameId]);
+
+  useEffect(() => {
+    if (!gameId || !session || session.side !== 'white') {
+      setInviteLink('');
+      setShareStatus('');
+      return;
+    }
+
+    const savedInvite = localStorage.getItem(`rtc:invite:${gameId}`) ?? '';
+    setInviteLink(savedInvite);
+  }, [gameId, session]);
 
   useEffect(() => {
     if (state?.status !== 'ACTIVE') {
@@ -223,14 +237,6 @@ export default function GamePage() {
       return;
     }
 
-    const isGameStarted = state.status === 'ACTIVE' && Boolean(state.players.black);
-    if (isGameStarted && !gameStartPlayedRef.current) {
-      playSound('gameStart');
-      gameStartPlayedRef.current = true;
-    } else if (!isGameStarted) {
-      gameStartPlayedRef.current = false;
-    }
-
     const previous = previousStateRef.current;
     previousStateRef.current = state;
 
@@ -268,6 +274,86 @@ export default function GamePage() {
       playSound('check');
     }
   }, [playSound, session, state]);
+
+  useEffect(() => {
+    if (!state || !session) {
+      setPregameLabel('');
+      return;
+    }
+
+    const isGameStarted = state.status === 'ACTIVE' && Boolean(state.players.black);
+    if (!isGameStarted) {
+      gameStartSignalMsRef.current = null;
+      setPregameLabel('');
+      return;
+    }
+
+    const startMs = state.lastStateChangeAtServerMs;
+    if (gameStartSignalMsRef.current !== startMs) {
+      gameStartSignalMsRef.current = startMs;
+      playSound('gameStart');
+    }
+
+    const updateCountdown = () => {
+      const elapsedMs = Date.now() - startMs;
+      if (elapsedMs < 1_000) {
+        setPregameLabel('3');
+        return;
+      }
+      if (elapsedMs < 2_000) {
+        setPregameLabel('2');
+        return;
+      }
+      if (elapsedMs < 3_000) {
+        setPregameLabel('1');
+        return;
+      }
+      if (elapsedMs < 4_000) {
+        setPregameLabel('GO');
+        return;
+      }
+      setPregameLabel('');
+    };
+
+    updateCountdown();
+    const timer = window.setInterval(updateCountdown, 100);
+    return () => window.clearInterval(timer);
+  }, [playSound, session, state]);
+
+  async function handleCopyInvite(): Promise<void> {
+    if (!inviteLink) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      setShareStatus('Invite copied.');
+    } catch {
+      setShareStatus('Copy failed. Share manually.');
+    }
+  }
+
+  async function handleShareInvite(): Promise<void> {
+    if (!inviteLink) {
+      return;
+    }
+
+    if (typeof navigator.share !== 'function') {
+      await handleCopyInvite();
+      return;
+    }
+
+    try {
+      await navigator.share({
+        title: 'Join my RealTimeChess game',
+        text: 'Tap to join my game',
+        url: inviteLink
+      });
+      setShareStatus('Invite shared.');
+    } catch {
+      // Ignore cancellation.
+    }
+  }
 
   const boardIndex = useMemo(() => {
     const index = new Map<string, Piece>();
@@ -348,7 +434,7 @@ export default function GamePage() {
     void submitMove(square);
   }
 
-  const canInteract = Boolean(session && state && state.status === 'ACTIVE' && !busy);
+  const canInteract = Boolean(session && state && state.status === 'ACTIVE' && !busy && !pregameLabel);
   const orientedFiles = session?.side === 'black' ? [...files].reverse() : files;
   const orientedRanks = session?.side === 'black' ? [...ranks].reverse() : ranks;
 
@@ -387,6 +473,17 @@ export default function GamePage() {
         <p className="game-meta-line game-meta-error" role={error ? 'alert' : undefined}>
           {error || <span>&nbsp;</span>}
         </p>
+        {session?.side === 'white' && inviteLink ? (
+          <div className="invite-actions">
+            <button type="button" onClick={handleCopyInvite}>
+              Copy invite link
+            </button>
+            <button type="button" onClick={handleShareInvite}>
+              Share invite
+            </button>
+          </div>
+        ) : null}
+        {shareStatus ? <p className="game-meta-line">{shareStatus}</p> : null}
       </div>
 
       <div className="board-wrap">
@@ -455,6 +552,11 @@ export default function GamePage() {
             <p>
               <a href="/">Start new game</a>
             </p>
+          </div>
+        ) : null}
+        {pregameLabel ? (
+          <div className="countdown-overlay" role="status" aria-live="assertive">
+            <h2>{pregameLabel}</h2>
           </div>
         ) : null}
       </div>
