@@ -67,6 +67,26 @@ a {
   margin-top: 0;
 }
 
+.game-meta {
+  width: min(92vw, 760px);
+  margin: 0 auto;
+  display: grid;
+  gap: 6px;
+}
+
+.game-meta-line {
+  margin: 0;
+  min-height: 1.4em;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.game-meta-error {
+  color: #ff9a9a;
+}
+
 .board-wrap {
   position: relative;
   width: min(92vw, 760px);

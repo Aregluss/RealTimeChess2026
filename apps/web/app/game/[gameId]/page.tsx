@@ -12,6 +12,7 @@ type Session = {
 const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const;
 const ranks = ['8', '7', '6', '5', '4', '3', '2', '1'] as const;
 const SOUND_FILES = {
+  gameStart: '/audio/game_start.mp3',
   moveSelf: '/audio/move-self.mp3',
   moveEnemy: '/audio/move-opponent.mp3',
   capture: '/audio/capture.mp3',
@@ -86,12 +87,15 @@ export default function GamePage() {
   const [nowMs, setNowMs] = useState<number>(Date.now());
   const previousStateRef = useRef<GameState | null>(null);
   const pendingOwnMoveVersionRef = useRef<number | null>(null);
+  const gameStartPlayedRef = useRef<boolean>(false);
   const audioRef = useRef<{
+    gameStart: HTMLAudioElement | null;
     moveSelf: HTMLAudioElement | null;
     moveEnemy: HTMLAudioElement | null;
     capture: HTMLAudioElement | null;
     check: HTMLAudioElement | null;
   }>({
+    gameStart: null,
     moveSelf: null,
     moveEnemy: null,
     capture: null,
@@ -135,6 +139,7 @@ export default function GamePage() {
   }, [state?.status]);
 
   useEffect(() => {
+    audioRef.current.gameStart = new Audio(SOUND_FILES.gameStart);
     audioRef.current.moveSelf = new Audio(SOUND_FILES.moveSelf);
     audioRef.current.moveEnemy = new Audio(SOUND_FILES.moveEnemy);
     audioRef.current.capture = new Audio(SOUND_FILES.capture);
@@ -156,6 +161,7 @@ export default function GamePage() {
         player.pause();
         player.src = '';
       }
+      audioRef.current.gameStart = null;
       audioRef.current.moveSelf = null;
       audioRef.current.moveEnemy = null;
       audioRef.current.capture = null;
@@ -215,6 +221,14 @@ export default function GamePage() {
   useEffect(() => {
     if (!state) {
       return;
+    }
+
+    const isGameStarted = state.status === 'ACTIVE' && Boolean(state.players.black);
+    if (isGameStarted && !gameStartPlayedRef.current) {
+      playSound('gameStart');
+      gameStartPlayedRef.current = true;
+    } else if (!isGameStarted) {
+      gameStartPlayedRef.current = false;
     }
 
     const previous = previousStateRef.current;
@@ -341,29 +355,39 @@ export default function GamePage() {
   return (
     <main>
       <h1>Game {gameId}</h1>
-      {!session ? (
-        <p>
-          No local session token for this game. Start/join from home first in this browser.
+      <div className="game-meta" aria-live="polite">
+        <p className="game-meta-line">
+          {!session ? (
+            'No local session token for this game. Start/join from home first in this browser.'
+          ) : (
+            <>
+              You are <strong>{session.side}</strong>
+            </>
+          )}
         </p>
-      ) : (
-        <p>
-          You are <strong>{session.side}</strong>
+        <p className="game-meta-line">
+          {state ? (
+            <>
+              Status: <strong>{state.status}</strong> | Version: <strong>{state.version}</strong> |
+              Check timeout: <strong>{state.rules.checkTimeoutMs}ms</strong>
+            </>
+          ) : (
+            <span>&nbsp;</span>
+          )}
         </p>
-      )}
-      {state ? (
-        <p>
-          Status: <strong>{state.status}</strong> | Version: <strong>{state.version}</strong> |
-          Check timeout: <strong>{state.rules.checkTimeoutMs}ms</strong>
+        <p className="game-meta-line">
+          {selectedPieceId ? (
+            <>
+              Selected: <code>{selectedPieceId}</code> at <code>{selectedSquare}</code>
+            </>
+          ) : (
+            'Select one of your pieces, then click destination.'
+          )}
         </p>
-      ) : null}
-      {selectedPieceId ? (
-        <p>
-          Selected: <code>{selectedPieceId}</code> at <code>{selectedSquare}</code>
+        <p className="game-meta-line game-meta-error" role={error ? 'alert' : undefined}>
+          {error || <span>&nbsp;</span>}
         </p>
-      ) : (
-        <p>Select one of your pieces, then click destination.</p>
-      )}
-      {error ? <p>{error}</p> : null}
+      </div>
 
       <div className="board-wrap">
         <div className="board" aria-label="chess-board">
