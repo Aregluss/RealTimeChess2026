@@ -335,6 +335,8 @@ export default function GamePage() {
   }
 
   const canInteract = Boolean(session && state && state.status === 'ACTIVE' && !busy);
+  const orientedFiles = session?.side === 'black' ? [...files].reverse() : files;
+  const orientedRanks = session?.side === 'black' ? [...ranks].reverse() : ranks;
 
   return (
     <main>
@@ -365,8 +367,8 @@ export default function GamePage() {
 
       <div className="board-wrap">
         <div className="board" aria-label="chess-board">
-          {ranks.map((rank, rankIndex) =>
-            files.map((file, fileIndex) => {
+          {orientedRanks.map((rank, rankIndex) =>
+            orientedFiles.map((file, fileIndex) => {
               const square = `${file}${rank}`;
               const piece = boardIndex.get(square);
               const isLight = (rankIndex + fileIndex) % 2 === 0;
