@@ -97,6 +97,21 @@ a {
   margin: 0;
 }
 
+.invite-share-primary {
+  border: none;
+  color: #f4f9ff;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  background: linear-gradient(180deg, #2f9bff 0%, #1f7cff 100%);
+  box-shadow:
+    0 6px 16px rgba(31, 124, 255, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+.invite-share-primary:hover {
+  filter: brightness(1.04);
+}
+
 .board-wrap {
   position: relative;
   width: min(92vw, 760px);

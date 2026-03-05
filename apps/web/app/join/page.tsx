@@ -1,7 +1,6 @@
 'use client';
 
-import { Suspense, useState } from 'react';
-import { useEffect } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import type { JoinGameRequest, JoinGameResponse } from '@realtimechess/shared-types';
 
@@ -32,10 +31,67 @@ function JoinPageContent() {
   const [gameId, setGameId] = useState('');
   const [joinCode, setJoinCode] = useState('');
   const [error, setError] = useState('');
+  const [autoJoining, setAutoJoining] = useState(false);
+  const autoJoinAttemptedRef = useRef(false);
+
+  const handleJoin = useCallback(
+    async (
+      prefill?: { gameId?: string; joinCode?: string },
+      options?: { auto?: boolean }
+    ) => {
+      const isAuto = Boolean(options?.auto);
+      if (isAuto) {
+        setAutoJoining(true);
+      }
+
+      setError('');
+
+      const normalizedGameId = (prefill?.gameId ?? gameId).trim();
+      const normalizedJoinCode = (prefill?.joinCode ?? joinCode).trim();
+      const existingSession = normalizedGameId ? getSession(normalizedGameId) : null;
+      if (existingSession) {
+        window.location.assign(`/game/${normalizedGameId}`);
+        return;
+      }
+
+      try {
+        const payload: JoinGameRequest = {
+          gameId: normalizedGameId,
+          joinCode: normalizedJoinCode
+        };
+
+        const res = await fetch('/api/games/join', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const json = (await res.json()) as JoinGameResponse | { error?: string };
+        if (!res.ok) {
+          setError((json as { error?: string }).error ?? 'Join failed');
+          if (isAuto) {
+            setAutoJoining(false);
+          }
+          return;
+        }
+
+        const joined = json as JoinGameResponse;
+        setSession(joined.gameId, joined.playerToken, joined.side);
+        const path = `/game/${joined.gameId}`;
+        window.location.assign(path);
+      } catch {
+        setError('Join failed');
+        if (isAuto) {
+          setAutoJoining(false);
+        }
+      }
+    },
+    [gameId, joinCode]
+  );
 
   useEffect(() => {
-    const gameIdParam = searchParams.get('gameId');
-    const codeParam = searchParams.get('code');
+    const gameIdParam = searchParams.get('gameId')?.trim() ?? '';
+    const codeParam = searchParams.get('code')?.trim() ?? '';
 
     if (gameIdParam) {
       setGameId(gameIdParam);
@@ -44,41 +100,27 @@ function JoinPageContent() {
     if (codeParam) {
       setJoinCode(codeParam);
     }
-  }, [searchParams]);
 
-  async function handleJoin() {
-    setError('');
-
-    const normalizedGameId = gameId.trim();
-    const existingSession = normalizedGameId ? getSession(normalizedGameId) : null;
-    if (existingSession) {
-      setError(
-        `This browser already has a ${existingSession.side} session for this game. Use a different browser or incognito for player 2.`
-      );
+    if (!gameIdParam || !codeParam || autoJoinAttemptedRef.current) {
       return;
     }
 
-    const payload: JoinGameRequest = {
-      gameId: normalizedGameId,
-      joinCode: joinCode.trim()
-    };
-
-    const res = await fetch('/api/games/join', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload)
+    autoJoinAttemptedRef.current = true;
+    void handleJoin({ gameId: gameIdParam, joinCode: codeParam }, { auto: true }).catch(() => {
+      setError('Join failed');
+      setAutoJoining(false);
     });
+  }, [handleJoin, searchParams]);
 
-    const json = (await res.json()) as JoinGameResponse | { error?: string };
-    if (!res.ok) {
-      setError((json as { error?: string }).error ?? 'Join failed');
-      return;
-    }
-
-    const joined = json as JoinGameResponse;
-    setSession(joined.gameId, joined.playerToken, joined.side);
-    const path = `/game/${joined.gameId}`;
-    window.location.assign(path);
+  if (autoJoining && !error) {
+    return (
+      <main>
+        <h1>Join Game</h1>
+        <div className="card">
+          <p>Joining game...</p>
+        </div>
+      </main>
+    );
   }
 
   return (
@@ -95,7 +137,7 @@ function JoinPageContent() {
           onChange={(event) => setJoinCode(event.target.value)}
         />
 
-        <button type="button" onClick={handleJoin}>
+        <button type="button" onClick={() => void handleJoin()}>
           Join
         </button>
 

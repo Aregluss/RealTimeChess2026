@@ -148,7 +148,7 @@ export default function GamePage() {
   const [nowMs, setNowMs] = useState<number>(Date.now());
   const [realtimeMode, setRealtimeMode] = useState<'sse' | 'polling'>('polling');
   const [inviteLink, setInviteLink] = useState<string>('');
-  const [shareStatus, setShareStatus] = useState<string>('');
+  const [shareButtonLabel, setShareButtonLabel] = useState<string>('Share invite');
   const [pregameLabel, setPregameLabel] = useState<string>('');
   const [illegalFlashSquare, setIllegalFlashSquare] = useState<string | null>(null);
   const [illegalFlashType, setIllegalFlashType] = useState<'piece' | 'king' | null>(null);
@@ -157,6 +157,7 @@ export default function GamePage() {
   const gameStartSignalMsRef = useRef<number | null>(null);
   const illegalFlashTimerRef = useRef<number | null>(null);
   const illegalFlashRafRef = useRef<number | null>(null);
+  const shareFeedbackTimerRef = useRef<number | null>(null);
   const latestStatusRef = useRef<GameState['status'] | null>(null);
   const audioRef = useRef<{
     gameStart: HTMLAudioElement | null;
@@ -201,7 +202,7 @@ export default function GamePage() {
   useEffect(() => {
     if (!gameId || !session || session.side !== 'white') {
       setInviteLink('');
-      setShareStatus('');
+      setShareButtonLabel('Share invite');
       return;
     }
 
@@ -262,6 +263,9 @@ export default function GamePage() {
       }
       if (illegalFlashRafRef.current !== null) {
         window.cancelAnimationFrame(illegalFlashRafRef.current);
+      }
+      if (shareFeedbackTimerRef.current !== null) {
+        window.clearTimeout(shareFeedbackTimerRef.current);
       }
     },
     []
@@ -524,16 +528,22 @@ export default function GamePage() {
     [playSound]
   );
 
-  async function handleCopyInvite(): Promise<void> {
+  async function copyInviteWithFeedback(): Promise<void> {
     if (!inviteLink) {
       return;
     }
 
     try {
       await navigator.clipboard.writeText(inviteLink);
-      setShareStatus('Invite copied.');
+      setShareButtonLabel('Link Copied');
+      if (shareFeedbackTimerRef.current !== null) {
+        window.clearTimeout(shareFeedbackTimerRef.current);
+      }
+      shareFeedbackTimerRef.current = window.setTimeout(() => {
+        setShareButtonLabel('Share invite');
+      }, 3_000);
     } catch {
-      setShareStatus('Copy failed. Share manually.');
+      setError('Copy failed. Share manually.');
     }
   }
 
@@ -542,8 +552,12 @@ export default function GamePage() {
       return;
     }
 
-    if (typeof navigator.share !== 'function') {
-      await handleCopyInvite();
+    const isIosDevice =
+      /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+    if (!isIosDevice || typeof navigator.share !== 'function') {
+      await copyInviteWithFeedback();
       return;
     }
 
@@ -553,7 +567,6 @@ export default function GamePage() {
         text: 'Tap to join my game',
         url: inviteLink
       });
-      setShareStatus('Invite shared.');
     } catch {
       // Ignore cancellation.
     }
@@ -687,6 +700,17 @@ export default function GamePage() {
     <main>
       <h1>Game {gameId}</h1>
       <div className="game-meta" aria-live="polite">
+        {session?.side === 'white' && inviteLink ? (
+          <div className="invite-actions">
+            <button
+              type="button"
+              onClick={handleShareInvite}
+              className="invite-share-primary"
+            >
+              {shareButtonLabel}
+            </button>
+          </div>
+        ) : null}
         <p className="game-meta-line">
           {!session ? (
             'No local session token for this game. Start/join from home first in this browser.'
@@ -719,17 +743,6 @@ export default function GamePage() {
         <p className="game-meta-line game-meta-error" role={error ? 'alert' : undefined}>
           {error || <span>&nbsp;</span>}
         </p>
-        {session?.side === 'white' && inviteLink ? (
-          <div className="invite-actions">
-            <button type="button" onClick={handleCopyInvite}>
-              Copy invite link
-            </button>
-            <button type="button" onClick={handleShareInvite}>
-              Share invite
-            </button>
-          </div>
-        ) : null}
-        {shareStatus ? <p className="game-meta-line">{shareStatus}</p> : null}
       </div>
 
       <div className="board-wrap">

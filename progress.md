@@ -174,3 +174,21 @@ Original prompt: We're going to build and deploy on free tier vercel a 2 player 
   - if public/spectator model: keep open but document this as intentional.
 - Add rate limiting for API routes (`start`, `join`, `move`, `state`, `events`) to reduce abuse/DoS risk.
 - Run dependency vulnerability audit in network-enabled CI (`pnpm audit --prod`) and track remediation.
+
+## 2026-03-05 UI flow update (host share + auto-join link)
+- Host game screen invite controls updated:
+  - removed separate `Copy invite link` button.
+  - moved `Share invite` to the top of game metadata as the primary action.
+  - styled primary invite button with a stronger blue gradient and bold label.
+- Share behavior updated:
+  - on iOS devices with Web Share support, `Share invite` opens native share sheet.
+  - on non-iOS/desktop, `Share invite` copies invite URL and button text switches to `Link Copied` for 3 seconds.
+- Join link flow updated:
+  - when `/join?gameId=...&code=...` is opened, join runs automatically and redirects straight to `/game/:gameId`.
+  - while auto-join is running, the page shows `Joining game...` instead of the manual join button.
+  - if this browser already has a local session for that game, `/join` now redirects directly to the game page.
+
+## 2026-03-05 verification
+- `pnpm typecheck` passed.
+- `pnpm --filter @realtimechess/web build` passed.
+- Could not run the `develop-web-game` Playwright client in this environment because the `playwright` package is not installed for the skill script.
