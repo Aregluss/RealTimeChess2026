@@ -26,6 +26,7 @@ import { storage, type GameRecord } from './storage';
 const GAME_ID_RE = /^g_[a-z0-9]{8}$/;
 const JOIN_CODE_RE = /^\d{6}$/;
 const SQUARE_RE = /^[a-h][1-8]$/;
+const MOVE_LOG_ENABLED = process.env.RTC_MOVE_LOGS !== '0';
 
 function generateId(prefix: string): string {
   if (prefix === 'g') {
@@ -71,10 +72,13 @@ function assertPieceId(value: string): void {
   }
 }
 
-function assertTargetSquare(value: string): void {
-  if (!SQUARE_RE.test(value.toLowerCase())) {
-    throw new AppError(400, 'Invalid target square');
+function normalizeSquare(value: string, field: 'from' | 'to'): string {
+  const normalized = value.toLowerCase();
+  if (!SQUARE_RE.test(normalized)) {
+    throw new AppError(400, `Invalid ${field} square`);
   }
+
+  return normalized;
 }
 
 function getSideForToken(record: GameRecord, token: string): Side | null {
@@ -107,9 +111,30 @@ async function saveRecord(record: GameRecord, nowMs: number): Promise<void> {
   await storage.setGameRecord(record, ttlMsForRecord(record, nowMs));
 }
 
+async function compareAndSwapRecord(
+  record: GameRecord,
+  expectedVersion: number,
+  nowMs: number
+): Promise<boolean> {
+  return storage.compareAndSwapGameRecord(
+    record.gameId,
+    expectedVersion,
+    record,
+    ttlMsForRecord(record, nowMs)
+  );
+}
+
 async function deleteRecord(record: GameRecord): Promise<void> {
   await storage.deleteGameRecord(record.gameId);
   await storage.deleteJoinCode(record.joinCode);
+}
+
+function logMoveEvent(event: string, payload: Record<string, unknown>): void {
+  if (!MOVE_LOG_ENABLED) {
+    return;
+  }
+
+  console.info(`[rtc.move.${event}] ${JSON.stringify(payload)}`);
 }
 
 async function emitStateEvent(type: GameEventPayload['type'], state: GameState): Promise<void> {
@@ -167,7 +192,7 @@ function updateCheckStateAndTerminals(state: GameState, nowMs: number): boolean 
   }
 
   if (whiteInCheck) {
-    if (!state.checkTimers.whiteInCheckSinceMs) {
+    if (state.checkTimers.whiteInCheckSinceMs === null) {
       state.checkTimers.whiteInCheckSinceMs = nowMs;
       changed = true;
     }
@@ -185,7 +210,7 @@ function updateCheckStateAndTerminals(state: GameState, nowMs: number): boolean 
   }
 
   if (blackInCheck) {
-    if (!state.checkTimers.blackInCheckSinceMs) {
+    if (state.checkTimers.blackInCheckSinceMs === null) {
       state.checkTimers.blackInCheckSinceMs = nowMs;
       changed = true;
     }
@@ -220,6 +245,38 @@ function updateCheckStateAndTerminals(state: GameState, nowMs: number): boolean 
   }
 
   return changed;
+}
+
+function updateCheckTimeoutTerminalOnly(state: GameState, nowMs: number): boolean {
+  if (state.status !== 'ACTIVE') {
+    return false;
+  }
+
+  if (
+    state.checkState.whiteInCheck &&
+    state.checkTimers.whiteInCheckSinceMs !== null &&
+    nowMs - state.checkTimers.whiteInCheckSinceMs >= state.rules.checkTimeoutMs
+  ) {
+    state.status = 'FINISHED';
+    state.winner = 'black';
+    state.finishReason = 'CHECK_TIMEOUT';
+    state.finishedAtServerMs = nowMs;
+    return true;
+  }
+
+  if (
+    state.checkState.blackInCheck &&
+    state.checkTimers.blackInCheckSinceMs !== null &&
+    nowMs - state.checkTimers.blackInCheckSinceMs >= state.rules.checkTimeoutMs
+  ) {
+    state.status = 'FINISHED';
+    state.winner = 'white';
+    state.finishReason = 'CHECK_TIMEOUT';
+    state.finishedAtServerMs = nowMs;
+    return true;
+  }
+
+  return false;
 }
 
 async function getRequiredRecord(gameId: string): Promise<GameRecord> {
@@ -314,7 +371,6 @@ export async function createGame(input: unknown): Promise<CreateGameResponse> {
 }
 
 export async function joinGame(input: unknown): Promise<JoinGameResponse> {
-  const nowMs = Date.now();
   const request = (input ?? {}) as JoinGameRequest;
 
   if (!request.gameId || !request.joinCode) {
@@ -323,57 +379,85 @@ export async function joinGame(input: unknown): Promise<JoinGameResponse> {
   assertGameId(request.gameId);
   assertJoinCode(request.joinCode);
 
-  const record = await getRequiredRecord(request.gameId);
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    const nowMs = Date.now();
+    const record = await getRequiredRecord(request.gameId);
 
-  if (nowMs > record.joinExpiresAtMs) {
-    await deleteRecord(record);
-    throw new AppError(410, 'Join code expired');
+    if (nowMs > record.joinExpiresAtMs) {
+      await deleteRecord(record);
+      throw new AppError(410, 'Join code expired');
+    }
+
+    if (record.state.players.black) {
+      throw new AppError(409, 'Game already has 2 players');
+    }
+
+    if (record.joinCode !== request.joinCode) {
+      throw new AppError(401, 'Invalid join code');
+    }
+
+    const blackToken = generateId('pt');
+    const currentVersion = record.state.version;
+
+    record.blackToken = blackToken;
+    record.state.players.black = {
+      connected: true,
+      disconnectedSinceMs: null
+    };
+    record.state.status = 'ACTIVE';
+    record.state.lastStateChangeAtServerMs = nowMs;
+    record.state.version = currentVersion + 1;
+
+    const saved = await compareAndSwapRecord(record, currentVersion, nowMs);
+    if (!saved) {
+      continue;
+    }
+
+    await storage.deleteJoinCode(record.joinCode);
+    await emitStateEvent('player.joined', record.state);
+
+    return {
+      gameId: request.gameId,
+      playerToken: blackToken,
+      side: 'black',
+      state: record.state
+    };
   }
 
-  if (record.state.players.black) {
-    throw new AppError(409, 'Game already has 2 players');
-  }
-
-  if (record.joinCode !== request.joinCode) {
-    throw new AppError(401, 'Invalid join code');
-  }
-
-  const blackToken = generateId('pt');
-  record.blackToken = blackToken;
-  record.state.players.black = {
-    connected: true,
-    disconnectedSinceMs: null
-  };
-  record.state.status = 'ACTIVE';
-  record.state.lastStateChangeAtServerMs = nowMs;
-  record.state.version += 1;
-
-  await saveRecord(record, nowMs);
-  await storage.deleteJoinCode(record.joinCode);
-  await emitStateEvent('player.joined', record.state);
-
-  return {
-    gameId: request.gameId,
-    playerToken: blackToken,
-    side: 'black',
-    state: record.state
-  };
+  throw new AppError(409, 'Join conflict, please retry');
 }
 
 export async function getGameState(gameId: string): Promise<GameState> {
   assertGameId(gameId);
-  const nowMs = Date.now();
-  const record = await getRequiredRecord(gameId);
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    const nowMs = Date.now();
+    const record = await getRequiredRecord(gameId);
 
-  if (record.state.status === 'ACTIVE') {
-    const changed = updateCheckStateAndTerminals(record.state, nowMs);
-    if (changed) {
-      await saveRecord(record, nowMs);
-      await emitStateEvent(eventTypeForState(record.state), record.state);
+    const currentVersion = record.state.version;
+    const timedOut = updateCheckTimeoutTerminalOnly(record.state, nowMs);
+    if (!timedOut) {
+      return record.state;
     }
+
+    record.state.lastStateChangeAtServerMs = nowMs;
+    record.state.version = currentVersion + 1;
+    const saved = await compareAndSwapRecord(record, currentVersion, nowMs);
+    if (!saved) {
+      continue;
+    }
+
+    logMoveEvent('state_timeout_finish', {
+      gameId,
+      attempt,
+      version: record.state.version,
+      winner: record.state.winner,
+      finishReason: record.state.finishReason
+    });
+    await emitStateEvent(eventTypeForState(record.state), record.state);
+    return record.state;
   }
 
-  return record.state;
+  throw new AppError(409, 'State conflict, retry');
 }
 
 export async function submitMove(
@@ -381,79 +465,197 @@ export async function submitMove(
   input: unknown,
   authToken?: string
 ): Promise<MoveResponse> {
-  const nowMs = Date.now();
   const request = (input ?? {}) as MoveRequest;
   const token = authToken ?? request.playerToken;
+  const requestId = generateId('mv');
+  const requestStartedAtMs = Date.now();
 
   if (!token) {
     throw new AppError(401, 'Missing player token');
   }
 
-  if (!request.pieceId || !request.to) {
-    throw new AppError(400, 'pieceId and to are required');
+  if (!request.pieceId || !request.from || !request.to) {
+    throw new AppError(400, 'pieceId, from, and to are required');
   }
   assertGameId(gameId);
   assertPieceId(request.pieceId);
-  assertTargetSquare(request.to);
+  const fromSquare = normalizeSquare(request.from, 'from');
+  const toSquare = normalizeSquare(request.to, 'to');
+  const expectedVersion =
+    typeof request.expectedVersion === 'number' && Number.isFinite(request.expectedVersion)
+      ? Math.floor(request.expectedVersion)
+      : null;
 
-  const record = await getRequiredRecord(gameId);
-
-  const side = getSideForToken(record, token);
-  if (!side) {
-    throw new AppError(403, 'Token does not match a player in this game');
-  }
-
-  if (record.state.status !== 'ACTIVE') {
-    throw new AppError(409, `Game is not active: ${record.state.status}`);
-  }
-
-  if (
-    typeof request.expectedVersion === 'number' &&
-    request.expectedVersion !== record.state.version
-  ) {
-    throw new AppError(409, `Version mismatch. Current version: ${record.state.version}`);
-  }
-
-  const cooldownUntil = record.state.cooldowns[request.pieceId] ?? 0;
-  if (nowMs < cooldownUntil) {
-    throw new AppError(409, `COOLDOWN_ACTIVE until ${cooldownUntil}`);
-  }
-
-  const moveResult = validateAndApplyMove({
-    board: record.state.board,
-    side,
+  logMoveEvent('received', {
+    requestId,
+    gameId,
     pieceId: request.pieceId,
-    to: request.to,
-    pieceHasMoved: record.state.pieceHasMoved
+    from: fromSquare,
+    to: toSquare,
+    expectedVersion
   });
 
-  if (!moveResult.ok) {
-    throw new AppError(409, moveResult.reason);
-  }
+  for (let attempt = 1; attempt <= 8; attempt += 1) {
+    const attemptStartedAtMs = Date.now();
+    const record = await getRequiredRecord(gameId);
+    const currentVersion = record.state.version;
+    const side = getSideForToken(record, token);
 
-  record.state.board = moveResult.board;
-  record.state.lastMoveAtServerMs = nowMs;
-  record.state.lastStateChangeAtServerMs = nowMs;
-  record.state.version += 1;
-
-  for (const pieceId of moveResult.touchedPieceIds) {
-    record.state.pieceHasMoved[pieceId] = true;
-    const movedPieceRef = record.state.board.pieces.find((piece) => piece.id === pieceId);
-    if (movedPieceRef) {
-      record.state.cooldowns[pieceId] =
-        nowMs + record.state.rules.pieceCooldownMs[movedPieceRef.type];
+    if (!side) {
+      const reason = 'Token does not match a player in this game';
+      logMoveEvent('rejected', {
+        requestId,
+        gameId,
+        attempt,
+        currentVersion,
+        reason
+      });
+      throw new AppError(403, reason);
     }
+
+    if (record.state.status !== 'ACTIVE') {
+      const reason = `Game is not active: ${record.state.status}`;
+      logMoveEvent('rejected', {
+        requestId,
+        gameId,
+        attempt,
+        currentVersion,
+        reason
+      });
+      throw new AppError(409, reason);
+    }
+
+    const pieceAtFrom = record.state.board.pieces.find((piece) => piece.id === request.pieceId);
+    if (!pieceAtFrom) {
+      logMoveEvent('rejected', {
+        requestId,
+        gameId,
+        attempt,
+        currentVersion,
+        reason: 'PIECE_NOT_FOUND'
+      });
+      throw new AppError(409, 'PIECE_NOT_FOUND');
+    }
+
+    if (pieceAtFrom.square !== fromSquare) {
+      logMoveEvent('rejected', {
+        requestId,
+        gameId,
+        attempt,
+        currentVersion,
+        reason: 'PIECE_POSITION_CHANGED',
+        actualFrom: pieceAtFrom.square
+      });
+      throw new AppError(409, `PIECE_POSITION_CHANGED current=${pieceAtFrom.square}`);
+    }
+
+    const nowMs = Date.now();
+    const cooldownUntil = record.state.cooldowns[request.pieceId] ?? 0;
+    if (nowMs < cooldownUntil) {
+      logMoveEvent('rejected', {
+        requestId,
+        gameId,
+        attempt,
+        currentVersion,
+        reason: 'COOLDOWN_ACTIVE',
+        cooldownUntil
+      });
+      throw new AppError(409, `COOLDOWN_ACTIVE until ${cooldownUntil}`);
+    }
+
+    const validateStartedAtMs = Date.now();
+    const moveResult = validateAndApplyMove({
+      board: record.state.board,
+      side,
+      pieceId: request.pieceId,
+      to: toSquare,
+      pieceHasMoved: record.state.pieceHasMoved
+    });
+    const validateMs = Date.now() - validateStartedAtMs;
+
+    if (!moveResult.ok) {
+      logMoveEvent('rejected', {
+        requestId,
+        gameId,
+        attempt,
+        currentVersion,
+        reason: moveResult.reason,
+        validateMs
+      });
+      throw new AppError(409, moveResult.reason);
+    }
+
+    record.state.board = moveResult.board;
+    record.state.lastMoveAtServerMs = nowMs;
+    record.state.lastStateChangeAtServerMs = nowMs;
+    record.state.version = currentVersion + 1;
+
+    for (const pieceId of moveResult.touchedPieceIds) {
+      record.state.pieceHasMoved[pieceId] = true;
+      const movedPieceRef = record.state.board.pieces.find((piece) => piece.id === pieceId);
+      if (movedPieceRef) {
+        record.state.cooldowns[pieceId] =
+          nowMs + record.state.rules.pieceCooldownMs[movedPieceRef.type];
+      }
+    }
+
+    updateCheckStateAndTerminals(record.state, nowMs);
+
+    const writeStartedAtMs = Date.now();
+    const saved = await compareAndSwapRecord(record, currentVersion, nowMs);
+    const writeMs = Date.now() - writeStartedAtMs;
+    if (!saved) {
+      logMoveEvent('cas_conflict', {
+        requestId,
+        gameId,
+        attempt,
+        currentVersion,
+        expectedVersion,
+        validateMs,
+        writeMs
+      });
+      continue;
+    }
+
+    const publishStartedAtMs = Date.now();
+    await emitStateEvent(eventTypeForState(record.state), record.state);
+    const publishMs = Date.now() - publishStartedAtMs;
+    const totalMs = Date.now() - requestStartedAtMs;
+    const attemptMs = Date.now() - attemptStartedAtMs;
+
+    logMoveEvent('committed', {
+      requestId,
+      gameId,
+      attempt,
+      side,
+      pieceId: request.pieceId,
+      from: fromSquare,
+      to: toSquare,
+      expectedVersion,
+      previousVersion: currentVersion,
+      committedVersion: record.state.version,
+      versionSkew:
+        typeof expectedVersion === 'number' ? currentVersion - expectedVersion : null,
+      validateMs,
+      writeMs,
+      publishMs,
+      attemptMs,
+      totalMs,
+      status: record.state.status
+    });
+
+    return {
+      accepted: true,
+      version: record.state.version,
+      serverReceivedAtMs: requestStartedAtMs,
+      state: record.state
+    };
   }
 
-  updateCheckStateAndTerminals(record.state, nowMs);
-
-  await saveRecord(record, nowMs);
-  await emitStateEvent(eventTypeForState(record.state), record.state);
-
-  return {
-    accepted: true,
-    version: record.state.version,
-    serverReceivedAtMs: nowMs,
-    state: record.state
-  };
+  logMoveEvent('rejected', {
+    requestId,
+    gameId,
+    reason: 'STATE_CONFLICT_RETRY_EXHAUSTED'
+  });
+  throw new AppError(409, 'STATE_CONFLICT_RETRY_EXHAUSTED');
 }

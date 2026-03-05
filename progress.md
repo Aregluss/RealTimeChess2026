@@ -143,3 +143,34 @@ Original prompt: We're going to build and deploy on free tier vercel a 2 player 
 - SSE/state endpoints are not auth-gated (gameId-based access model; acceptable for current no-account + future spectator direction, but not private-room grade).
 - No rate limiting yet on API routes.
 - No dependency vulnerability audit executed in this shell (Node unavailable in agent shell); run locally with `pnpm audit`.
+
+## 2026-03-04 performance/conflict hardening
+- Added optimistic CAS writes in storage adapters:
+  - new `compareAndSwapGameRecord(gameId, expectedVersion, nextRecord, ttlMs)` in `packages/server-core/src/storage.ts`.
+  - Redis implementation uses `WATCH` + `MULTI/EXEC` retries to avoid lost updates under concurrent writes.
+- Hardened server move flow in `packages/server-core/src/store.ts`:
+  - `submitMove` now retries on CAS conflicts (up to 8 attempts).
+  - move requests require `from` and `to`; server rejects stale intents with `PIECE_POSITION_CHANGED`.
+  - `expectedVersion` is now advisory telemetry (logged, no strict reject) to allow valid moves to proceed after unrelated state changes.
+  - added structured move logs (`[rtc.move.*]`) with timings (`validateMs`, `writeMs`, `publishMs`, `totalMs`), version skew, and reject reasons.
+- Reduced expensive read-path work:
+  - `getGameState` no longer runs full check/mate recomputation on every read.
+  - read path only enforces elapsed check-timeout terminal state and persists it via CAS if needed.
+- Reduced client background reads and render churn in `apps/web/app/game/[gameId]/page.tsx`:
+  - switched from unconditional 1.5s polling to SSE-first with polling fallback only on stream errors.
+  - fallback poll interval is adaptive (`6s` visible, `20s` hidden).
+  - replaced per-frame (`requestAnimationFrame`) `nowMs` React updates with `100ms` interval ticks.
+  - move payload now includes `from`, and client logs structured events (`[rtc.client.*]`) for submit/accept/reject and transport changes.
+- Documentation update:
+  - `docs/api-contracts-v1.md` updated to reflect `from` requirement and advisory `expectedVersion`.
+
+## Verification note
+- Could not run `pnpm typecheck` in this shell because `pnpm`/`npx` are unavailable in the environment.
+
+## Post-beta security TODOs
+- Move `playerToken` out of `localStorage` into HttpOnly cookie/session flow to reduce XSS token theft risk.
+- Add auth policy to read endpoints based on desired privacy model:
+  - if private rooms: require authorized player/spectator token for `GET /api/games/:gameId/state` and `GET /api/games/:gameId/events`.
+  - if public/spectator model: keep open but document this as intentional.
+- Add rate limiting for API routes (`start`, `join`, `move`, `state`, `events`) to reduce abuse/DoS risk.
+- Run dependency vulnerability audit in network-enabled CI (`pnpm audit --prod`) and track remediation.

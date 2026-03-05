@@ -19,6 +19,13 @@ const SOUND_FILES = {
   check: '/audio/move-check.mp3',
   illegal: '/audio/illegal.mp3'
 } as const;
+const ACTIVE_CLOCK_TICK_MS = 100;
+const POLL_INTERVAL_ACTIVE_MS = 6_000;
+const POLL_INTERVAL_HIDDEN_MS = 20_000;
+
+function logClient(event: string, payload: Record<string, unknown>): void {
+  console.info(`[rtc.client.${event}] ${JSON.stringify(payload)}`);
+}
 
 function pieceSymbol(piece: Piece): string {
   const key = `${piece.side}:${piece.type}`;
@@ -97,6 +104,9 @@ function extractMoveErrorCode(message: string): string {
   if (message.startsWith('Version mismatch')) {
     return 'VERSION_MISMATCH';
   }
+  if (message.startsWith('PIECE_POSITION_CHANGED')) {
+    return 'PIECE_POSITION_CHANGED';
+  }
   return message.trim();
 }
 
@@ -112,6 +122,8 @@ function formatMoveError(message: string): string {
       return 'That piece is still on cooldown.';
     case 'VERSION_MISMATCH':
       return 'Board updated. Try your move again.';
+    case 'PIECE_POSITION_CHANGED':
+      return 'Board updated. Piece moved; select again.';
     case 'ILLEGAL_MOVE_PATTERN':
       return 'Illegal move pattern for that piece.';
     case 'NOT_YOUR_PIECE':
@@ -134,6 +146,7 @@ export default function GamePage() {
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
   const [busy, setBusy] = useState<boolean>(false);
   const [nowMs, setNowMs] = useState<number>(Date.now());
+  const [realtimeMode, setRealtimeMode] = useState<'sse' | 'polling'>('polling');
   const [inviteLink, setInviteLink] = useState<string>('');
   const [shareStatus, setShareStatus] = useState<string>('');
   const [pregameLabel, setPregameLabel] = useState<string>('');
@@ -197,14 +210,11 @@ export default function GamePage() {
       return;
     }
 
-    let frameId = 0;
-    const tick = () => {
+    const tickHandle = window.setInterval(() => {
       setNowMs(Date.now());
-      frameId = requestAnimationFrame(tick);
-    };
+    }, ACTIVE_CLOCK_TICK_MS);
 
-    frameId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frameId);
+    return () => window.clearInterval(tickHandle);
   }, [state?.status]);
 
   useEffect(() => {
@@ -258,45 +268,111 @@ export default function GamePage() {
     }
 
     let active = true;
-
-    async function loadState() {
-      const res = await fetch(`/api/games/${gameId}/state`);
-      const json = await res.json();
-
-      if (!active) {
-        return;
-      }
-
-      if (!res.ok) {
-        setError(json.error ?? 'Failed to load state');
-        return;
-      }
-
-      setState(json as GameState);
-      setError('');
-    }
-
-    loadState();
-
     let eventSource: EventSource | null = null;
+    let pollHandle: number | null = null;
+    let sseConnected = false;
+
+    const clearPolling = () => {
+      if (pollHandle !== null) {
+        window.clearInterval(pollHandle);
+        pollHandle = null;
+      }
+    };
+
+    const loadState = async (
+      source: 'initial' | 'poll' | 'visibility' | 'sse-error'
+    ): Promise<void> => {
+      try {
+        const res = await fetch(`/api/games/${gameId}/state`);
+        const json = (await res.json()) as GameState | { error?: string };
+
+        if (!active) {
+          return;
+        }
+
+        if (!res.ok) {
+          setError((json as { error?: string }).error ?? 'Failed to load state');
+          return;
+        }
+
+        setState(json as GameState);
+        setError('');
+        if (source !== 'poll') {
+          logClient('state_loaded', { gameId, source });
+        }
+      } catch {
+        if (!active) {
+          return;
+        }
+        setError('Failed to load state');
+      }
+    };
+
+    const schedulePolling = () => {
+      clearPolling();
+      const intervalMs = document.hidden ? POLL_INTERVAL_HIDDEN_MS : POLL_INTERVAL_ACTIVE_MS;
+      pollHandle = window.setInterval(() => {
+        if (!sseConnected) {
+          void loadState('poll');
+        }
+      }, intervalMs);
+    };
+
+    const handleVisibilityChange = () => {
+      if (sseConnected) {
+        return;
+      }
+
+      schedulePolling();
+      if (!document.hidden) {
+        void loadState('visibility');
+      }
+    };
+
+    void loadState('initial');
+
     if (typeof window !== 'undefined' && 'EventSource' in window) {
       eventSource = new EventSource(`/api/games/${gameId}/events`);
+      eventSource.addEventListener('open', () => {
+        if (!active) {
+          return;
+        }
+        sseConnected = true;
+        setRealtimeMode('sse');
+        clearPolling();
+        logClient('sse_open', { gameId });
+      });
       eventSource.addEventListener('state', (event) => {
         try {
           const payload = JSON.parse((event as MessageEvent<string>).data) as GameState;
           setState(payload);
           setError('');
+          setRealtimeMode('sse');
         } catch {
           // ignore malformed events
         }
       });
+      eventSource.addEventListener('error', () => {
+        if (!active) {
+          return;
+        }
+        sseConnected = false;
+        setRealtimeMode('polling');
+        schedulePolling();
+        void loadState('sse-error');
+        logClient('sse_error', { gameId });
+      });
+      schedulePolling();
+    } else {
+      setRealtimeMode('polling');
+      schedulePolling();
     }
-
-    const pollHandle = setInterval(loadState, 1500);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       active = false;
-      clearInterval(pollHandle);
+      clearPolling();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       eventSource?.close();
     };
   }, [gameId]);
@@ -318,7 +394,8 @@ export default function GamePage() {
     }
 
     const pendingOwnMoveVersion = pendingOwnMoveVersionRef.current;
-    const isOwnMove = pendingOwnMoveVersion === state.version;
+    const isOwnMove =
+      pendingOwnMoveVersion !== null && state.version >= pendingOwnMoveVersion;
     if (pendingOwnMoveVersion !== null && state.version >= pendingOwnMoveVersion) {
       pendingOwnMoveVersionRef.current = null;
     }
@@ -474,13 +551,23 @@ export default function GamePage() {
   );
 
   async function submitMove(toSquare: string): Promise<void> {
-    if (!state || !session || !selectedPieceId) {
+    if (!state || !session || !selectedPieceId || !selectedSquare) {
       return;
     }
 
     setBusy(true);
     try {
+      const sentAtMs = Date.now();
       pendingOwnMoveVersionRef.current = state.version + 1;
+      logClient('move_submit', {
+        gameId,
+        pieceId: selectedPieceId,
+        from: selectedSquare,
+        to: toSquare,
+        localVersion: state.version,
+        sentAtMs
+      });
+
       const res = await fetch(`/api/games/${gameId}/move`, {
         method: 'POST',
         headers: {
@@ -489,6 +576,7 @@ export default function GamePage() {
         },
         body: JSON.stringify({
           pieceId: selectedPieceId,
+          from: selectedSquare,
           to: toSquare,
           expectedVersion: state.version
         })
@@ -509,11 +597,29 @@ export default function GamePage() {
           triggerIllegalFeedback(movedPieceSquare ?? ownKingSquare ?? null, 'piece');
         }
 
+        logClient('move_rejected', {
+          gameId,
+          pieceId: selectedPieceId,
+          from: selectedSquare,
+          to: toSquare,
+          localVersion: state.version,
+          errorCode,
+          serverError
+        });
         setError(formatMoveError(serverError));
         return;
       }
 
       setState(json.state as GameState);
+      logClient('move_accepted', {
+        gameId,
+        pieceId: selectedPieceId,
+        from: selectedSquare,
+        to: toSquare,
+        localVersion: state.version,
+        nextVersion: (json as { state?: GameState }).state?.version ?? null,
+        roundTripMs: Date.now() - sentAtMs
+      });
       setError('');
       setSelectedPieceId(null);
       setSelectedSquare(null);
@@ -567,7 +673,8 @@ export default function GamePage() {
           {state ? (
             <>
               Status: <strong>{state.status}</strong> | Version: <strong>{state.version}</strong> |
-              Check timeout: <strong>{state.rules.checkTimeoutMs}ms</strong>
+              Check timeout: <strong>{state.rules.checkTimeoutMs}ms</strong> | Transport:{' '}
+              <strong>{realtimeMode}</strong>
             </>
           ) : (
             <span>&nbsp;</span>

@@ -112,8 +112,11 @@ Request:
 Rules:
 - `promotion` ignored unless pawn promotion is reached; v1 auto-queen.
 - Server timestamp/order always wins.
+- `expectedVersion` is advisory telemetry (not a hard reject).
+- `from` is required and must match current authoritative piece square.
 - Move rejected if:
   - piece is not owned by caller
+  - `from` no longer matches piece location (`PIECE_POSITION_CHANGED`)
   - cooldown not expired
   - illegal move shape/path
   - resulting own-king self-check

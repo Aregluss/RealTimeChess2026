@@ -35,6 +35,7 @@ export interface JoinGameResponse {
 export interface MoveRequest {
   playerToken?: string;
   pieceId: string;
+  from: string;
   to: string;
   expectedVersion?: number;
 }
