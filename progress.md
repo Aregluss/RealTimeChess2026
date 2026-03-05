@@ -242,3 +242,19 @@ Original prompt: We're going to build and deploy on free tier vercel a 2 player 
 ## 2026-03-05 Blob/static verification
 - `pnpm --filter @realtimechess/web build` passed.
 - `pnpm typecheck` passed.
+
+## 2026-03-05 invite preview crawler fix
+- Root cause found on live deploy:
+  - `/invite/:gameId/:code` responded with HTTP `307` server redirect to `/join?...`.
+  - crawler/iMessage preview therefore resolved to join page metadata instead of invite metadata.
+  - file-based metadata route (`app/opengraph-image.tsx`) was also overriding OG image selection.
+- Fixes:
+  - replaced server redirect in invite page with rendered HTML + client redirect component:
+    - `apps/web/app/invite/[gameId]/[code]/page.tsx`
+    - `apps/web/app/invite/[gameId]/[code]/redirect-client.tsx`
+  - removed file-based OG route overrides:
+    - deleted `apps/web/app/opengraph-image.tsx`
+    - deleted `apps/web/app/invite/[gameId]/[code]/opengraph-image.tsx`
+- Verification:
+  - `pnpm --filter @realtimechess/web build` passed.
+  - `pnpm typecheck` passed.

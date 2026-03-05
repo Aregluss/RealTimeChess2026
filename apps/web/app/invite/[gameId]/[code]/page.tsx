@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
-import { redirect } from 'next/navigation';
 import { getSiteUrl, getSocialImageUrl } from '../../../../lib/metadata';
+import InviteRedirectClient from './redirect-client';
 
 type InvitePageProps = {
   params: Promise<{
@@ -47,5 +47,16 @@ export default async function InviteRedirectPage({ params }: InvitePageProps) {
   const { gameId, code } = await params;
   const safeGameId = encodeURIComponent(gameId);
   const safeCode = encodeURIComponent(code);
-  redirect(`/join?gameId=${safeGameId}&code=${safeCode}`);
+  const targetPath = `/join?gameId=${safeGameId}&code=${safeCode}`;
+
+  return (
+    <main>
+      <h1>RealTimeChess Invite</h1>
+      <p>Opening your game...</p>
+      <p>
+        If you are not redirected, <a href={targetPath}>tap here</a>.
+      </p>
+      <InviteRedirectClient href={targetPath} />
+    </main>
+  );
 }
