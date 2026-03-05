@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#122445" />
+      <stop offset="55%" stop-color="#1f7cff" />
+      <stop offset="100%" stop-color="#34b4ff" />
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)" />
+  <text x="80" y="140" fill="#eaf5ff" font-family="Arial, sans-serif" font-size="46" font-weight="700">
+    RealTimeChess
+  </text>
+  <text x="80" y="300" fill="#ffffff" font-family="Arial, sans-serif" font-size="86" font-weight="800">
+    Real-time chess.
+  </text>
+  <text x="80" y="390" fill="#ffffff" font-family="Arial, sans-serif" font-size="86" font-weight="800">
+    No turns.
+  </text>
+  <text x="80" y="515" fill="#eaf5ff" font-family="Arial, sans-serif" font-size="34">
+    Replace this placeholder with final site social image.
+  </text>
+</svg>

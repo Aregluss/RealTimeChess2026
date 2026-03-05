@@ -359,7 +359,7 @@ export async function createGame(input: unknown): Promise<CreateGameResponse> {
     gameId,
     joinCode,
     joinExpiresAtMs,
-    joinLink: `/join?gameId=${gameId}&code=${joinCode}`,
+    joinLink: `/invite/${gameId}/${joinCode}`,
     playerToken: whiteToken,
     side: 'white',
     state,

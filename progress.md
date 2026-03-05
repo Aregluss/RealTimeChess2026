@@ -192,3 +192,53 @@ Original prompt: We're going to build and deploy on free tier vercel a 2 player 
 - `pnpm typecheck` passed.
 - `pnpm --filter @realtimechess/web build` passed.
 - Could not run the `develop-web-game` Playwright client in this environment because the `playwright` package is not installed for the skill script.
+
+## 2026-03-05 social preview scaffolding
+- Added reusable site URL resolver for metadata base:
+  - `apps/web/lib/metadata.ts`
+  - reads `NEXT_PUBLIC_APP_URL` first, then Vercel env vars, then localhost fallback.
+- Added global app metadata scaffold in `apps/web/app/layout.tsx`:
+  - default title template and description.
+  - Open Graph + Twitter card defaults.
+  - default image points to new `/opengraph-image`.
+- Added root OG image generator:
+  - `apps/web/app/opengraph-image.tsx` (Next `ImageResponse`).
+- Added invite share route scaffold:
+  - `apps/web/app/invite/[gameId]/[code]/page.tsx`
+  - route-level `generateMetadata()` for custom invite title/description/image.
+  - route immediately redirects users to `/join?gameId=...&code=...`.
+- Added invite OG image generator:
+  - `apps/web/app/invite/[gameId]/[code]/opengraph-image.tsx`.
+- Updated backend join link shape so new games produce shareable invite route:
+  - `packages/server-core/src/store.ts`
+  - `joinLink` now uses `/invite/:gameId/:code` instead of `/join?gameId=...&code=...`.
+
+## 2026-03-05 social preview verification
+- `pnpm --filter @realtimechess/web build` passed and includes:
+  - `/opengraph-image`
+  - `/invite/[gameId]/[code]`
+  - `/invite/[gameId]/[code]/opengraph-image`
+- `pnpm typecheck` passed after build refreshed `.next/types`.
+
+## 2026-03-05 Blob-first image URLs + static fallback placeholders
+- Added social image URL resolution in `apps/web/lib/metadata.ts`:
+  - env-first:
+    - `NEXT_PUBLIC_OG_SITE_IMAGE_URL`
+    - `NEXT_PUBLIC_OG_INVITE_IMAGE_URL`
+  - fallback to repo static assets:
+    - `/og/site-default.svg`
+    - `/og/invite-default.svg`
+- Updated metadata usage:
+  - root metadata in `apps/web/app/layout.tsx` now uses `getSocialImageUrl('site')`.
+  - invite metadata in `apps/web/app/invite/[gameId]/[code]/page.tsx` now uses `getSocialImageUrl('invite')`.
+- Added static placeholder assets:
+  - `apps/web/public/og/site-default.svg`
+  - `apps/web/public/og/invite-default.svg`
+- Added documentation for final asset naming/specs and env wiring:
+  - `docs/social-preview-assets.md`
+- Updated `.env.example` with social preview env vars.
+- Updated API contract example join link to current `/invite/:gameId/:code` shape.
+
+## 2026-03-05 Blob/static verification
+- `pnpm --filter @realtimechess/web build` passed.
+- `pnpm typecheck` passed.

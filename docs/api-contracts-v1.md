@@ -23,7 +23,7 @@ Response `201`:
   "gameId": "g_abc123",
   "joinCode": "483920",
   "joinExpiresAtMs": 1760000000000,
-  "joinLink": "/join?gameId=g_abc123&code=483920",
+  "joinLink": "/invite/g_abc123/483920",
   "playerToken": "<host-token>",
   "side": "white",
   "config": {
