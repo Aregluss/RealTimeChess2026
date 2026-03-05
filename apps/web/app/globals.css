@@ -138,6 +138,33 @@ a {
   z-index: 2;
 }
 
+.square.illegal-flash {
+  animation: illegal-flash 520ms ease-out 1;
+}
+
+.square.illegal-piece {
+  outline: 3px solid #ff5252;
+  z-index: 4;
+}
+
+.square.illegal-king {
+  outline: 4px solid #ff2a2a;
+  box-shadow: 0 0 0 3px rgba(255, 42, 42, 0.25);
+  z-index: 5;
+}
+
+@keyframes illegal-flash {
+  0% {
+    filter: brightness(1);
+  }
+  30% {
+    filter: brightness(1.28);
+  }
+  100% {
+    filter: brightness(1);
+  }
+}
+
 .piece {
   font-family: 'Noto Sans Symbols 2', 'Segoe UI Symbol', 'Apple Symbols',
     'Arial Unicode MS', sans-serif;

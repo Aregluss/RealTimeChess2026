@@ -16,7 +16,8 @@ const SOUND_FILES = {
   moveSelf: '/audio/move-self.mp3',
   moveEnemy: '/audio/move-opponent.mp3',
   capture: '/audio/capture.mp3',
-  check: '/audio/move-check.mp3'
+  check: '/audio/move-check.mp3',
+  illegal: '/audio/illegal.mp3'
 } as const;
 
 function pieceSymbol(piece: Piece): string {
@@ -74,6 +75,39 @@ function getCooldownRatio(piece: Piece, state: GameState, nowMs: number): number
   return Math.max(0, Math.min(1, (until - nowMs) / total));
 }
 
+function extractMoveErrorCode(message: string): string {
+  if (message.startsWith('COOLDOWN_ACTIVE')) {
+    return 'COOLDOWN_ACTIVE';
+  }
+  if (message.startsWith('Version mismatch')) {
+    return 'VERSION_MISMATCH';
+  }
+  return message.trim();
+}
+
+function formatMoveError(message: string): string {
+  const code = extractMoveErrorCode(message);
+
+  switch (code) {
+    case 'SELF_CHECK':
+      return 'Illegal move: your king would be in check.';
+    case 'CASTLE_THROUGH_CHECK':
+      return 'Illegal castle: king cannot move through check.';
+    case 'COOLDOWN_ACTIVE':
+      return 'That piece is still on cooldown.';
+    case 'VERSION_MISMATCH':
+      return 'Board updated. Try your move again.';
+    case 'ILLEGAL_MOVE_PATTERN':
+      return 'Illegal move pattern for that piece.';
+    case 'NOT_YOUR_PIECE':
+      return 'That is not your piece.';
+    case 'NO_OP_MOVE':
+      return 'Select a different destination square.';
+    default:
+      return message || 'Move rejected';
+  }
+}
+
 export default function GamePage() {
   const params = useParams<{ gameId: string }>();
   const gameId = params.gameId;
@@ -88,21 +122,27 @@ export default function GamePage() {
   const [inviteLink, setInviteLink] = useState<string>('');
   const [shareStatus, setShareStatus] = useState<string>('');
   const [pregameLabel, setPregameLabel] = useState<string>('');
+  const [illegalFlashSquare, setIllegalFlashSquare] = useState<string | null>(null);
+  const [illegalFlashType, setIllegalFlashType] = useState<'piece' | 'king' | null>(null);
   const previousStateRef = useRef<GameState | null>(null);
   const pendingOwnMoveVersionRef = useRef<number | null>(null);
   const gameStartSignalMsRef = useRef<number | null>(null);
+  const illegalFlashTimerRef = useRef<number | null>(null);
+  const illegalFlashRafRef = useRef<number | null>(null);
   const audioRef = useRef<{
     gameStart: HTMLAudioElement | null;
     moveSelf: HTMLAudioElement | null;
     moveEnemy: HTMLAudioElement | null;
     capture: HTMLAudioElement | null;
     check: HTMLAudioElement | null;
+    illegal: HTMLAudioElement | null;
   }>({
     gameStart: null,
     moveSelf: null,
     moveEnemy: null,
     capture: null,
-    check: null
+    check: null,
+    illegal: null
   });
 
   const playSound = useCallback((name: keyof typeof SOUND_FILES): void => {
@@ -158,6 +198,7 @@ export default function GamePage() {
     audioRef.current.moveEnemy = new Audio(SOUND_FILES.moveEnemy);
     audioRef.current.capture = new Audio(SOUND_FILES.capture);
     audioRef.current.check = new Audio(SOUND_FILES.check);
+    audioRef.current.illegal = new Audio(SOUND_FILES.illegal);
 
     for (const player of Object.values(audioRef.current)) {
       if (!player) {
@@ -180,8 +221,21 @@ export default function GamePage() {
       audioRef.current.moveEnemy = null;
       audioRef.current.capture = null;
       audioRef.current.check = null;
+      audioRef.current.illegal = null;
     };
   }, []);
+
+  useEffect(
+    () => () => {
+      if (illegalFlashTimerRef.current !== null) {
+        window.clearTimeout(illegalFlashTimerRef.current);
+      }
+      if (illegalFlashRafRef.current !== null) {
+        window.cancelAnimationFrame(illegalFlashRafRef.current);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     if (!gameId) {
@@ -322,6 +376,35 @@ export default function GamePage() {
     return () => window.clearInterval(timer);
   }, [playSound, session, state?.players.black, state?.status, state?.version]);
 
+  const triggerIllegalFeedback = useCallback(
+    (square: string | null, type: 'piece' | 'king') => {
+      playSound('illegal');
+
+      if (!square) {
+        return;
+      }
+
+      if (illegalFlashTimerRef.current !== null) {
+        window.clearTimeout(illegalFlashTimerRef.current);
+      }
+      if (illegalFlashRafRef.current !== null) {
+        window.cancelAnimationFrame(illegalFlashRafRef.current);
+      }
+
+      setIllegalFlashSquare(null);
+      setIllegalFlashType(null);
+      illegalFlashRafRef.current = window.requestAnimationFrame(() => {
+        setIllegalFlashSquare(square);
+        setIllegalFlashType(type);
+        illegalFlashTimerRef.current = window.setTimeout(() => {
+          setIllegalFlashSquare(null);
+          setIllegalFlashType(null);
+        }, 520);
+      });
+    },
+    [playSound]
+  );
+
   async function handleCopyInvite(): Promise<void> {
     if (!inviteLink) {
       return;
@@ -399,7 +482,19 @@ export default function GamePage() {
       const json = await res.json();
       if (!res.ok) {
         pendingOwnMoveVersionRef.current = null;
-        setError(json.error ?? 'Move rejected');
+        const serverError = (json as { error?: string }).error ?? 'Move rejected';
+        const errorCode = extractMoveErrorCode(serverError);
+        const ownKingSquare = session.side === 'white' ? whiteKingSquare ?? null : blackKingSquare ?? null;
+        const movedPieceSquare =
+          state.board.pieces.find((piece) => piece.id === selectedPieceId)?.square ?? selectedSquare;
+
+        if (errorCode === 'SELF_CHECK' || errorCode === 'CASTLE_THROUGH_CHECK') {
+          triggerIllegalFeedback(ownKingSquare ?? movedPieceSquare ?? null, 'king');
+        } else {
+          triggerIllegalFeedback(movedPieceSquare ?? ownKingSquare ?? null, 'piece');
+        }
+
+        setError(formatMoveError(serverError));
         return;
       }
 
@@ -501,6 +596,12 @@ export default function GamePage() {
               const isBlackKingInCheck =
                 Boolean(state?.checkState.blackInCheck) && blackKingSquare === square;
               const isInCheckSquare = isWhiteKingInCheck || isBlackKingInCheck;
+              const isIllegalFlashSquare = illegalFlashSquare === square;
+              const illegalClass = isIllegalFlashSquare
+                ? illegalFlashType === 'king'
+                  ? 'illegal-king'
+                  : 'illegal-piece'
+                : '';
 
               const showCooldown = Boolean(
                 piece && state && session && piece.side === session.side
@@ -516,7 +617,7 @@ export default function GamePage() {
                   onClick={() => onSquareClick(square)}
                   className={`square ${isLight ? 'light' : 'dark'} ${isSelected ? 'selected' : ''} ${
                     isInCheckSquare ? 'in-check' : ''
-                  }`}
+                  } ${isIllegalFlashSquare ? 'illegal-flash' : ''} ${illegalClass}`}
                   disabled={!canInteract}
                   title={square}
                 >
