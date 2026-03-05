@@ -31,9 +31,7 @@ function JoinPageContent() {
   const searchParams = useSearchParams();
   const [gameId, setGameId] = useState('');
   const [joinCode, setJoinCode] = useState('');
-  const [response, setResponse] = useState('');
   const [error, setError] = useState('');
-  const [gamePath, setGamePath] = useState('');
 
   useEffect(() => {
     const gameIdParam = searchParams.get('gameId');
@@ -50,8 +48,6 @@ function JoinPageContent() {
 
   async function handleJoin() {
     setError('');
-    setResponse('');
-    setGamePath('');
 
     const normalizedGameId = gameId.trim();
     const existingSession = normalizedGameId ? getSession(normalizedGameId) : null;
@@ -82,8 +78,7 @@ function JoinPageContent() {
     const joined = json as JoinGameResponse;
     setSession(joined.gameId, joined.playerToken, joined.side);
     const path = `/game/${joined.gameId}`;
-    setGamePath(path);
-    setResponse(JSON.stringify(joined, null, 2));
+    window.location.assign(path);
   }
 
   return (
@@ -104,13 +99,7 @@ function JoinPageContent() {
           Join
         </button>
 
-        {gamePath ? (
-          <p>
-            Session saved. Open game: <a href={gamePath}>{gamePath}</a>
-          </p>
-        ) : null}
         {error ? <p>{error}</p> : null}
-        {response ? <pre>{response}</pre> : null}
       </div>
     </main>
   );

@@ -19,6 +19,10 @@ function setSession(gameId: string, playerToken: string, side: 'white' | 'black'
   localStorage.setItem(`rtc:session:${gameId}`, JSON.stringify({ playerToken, side }));
 }
 
+function setInviteLink(gameId: string, inviteLink: string): void {
+  localStorage.setItem(`rtc:invite:${gameId}`, inviteLink);
+}
+
 export default function HomePage() {
   const [boardMode, setBoardMode] = useState<'classic' | 'custom'>('classic');
   const [customPiecesText, setCustomPiecesText] = useState(
@@ -26,10 +30,7 @@ export default function HomePage() {
   );
   const [response, setResponse] = useState<string>('');
   const [error, setError] = useState<string>('');
-  const [gamePath, setGamePath] = useState<string>('');
-  const [joinLink, setJoinLink] = useState<string>('');
-  const [copyStatus, setCopyStatus] = useState<string>('');
-  const [checkTimeoutMs, setCheckTimeoutMs] = useState<string>('2000');
+  const [checkTimeoutSeconds, setCheckTimeoutSeconds] = useState<string>('5');
 
   const boardSetup: BoardSetupRequest | undefined = useMemo(() => {
     if (boardMode === 'classic') {
@@ -47,9 +48,6 @@ export default function HomePage() {
   async function handleCreateGame() {
     setError('');
     setResponse('');
-    setGamePath('');
-    setJoinLink('');
-    setCopyStatus('');
 
     if (!boardSetup) {
       setError('Invalid custom board JSON.');
@@ -58,7 +56,7 @@ export default function HomePage() {
 
     const payload: CreateGameRequest = {
       boardSetup,
-      checkTimeoutMs: Number(checkTimeoutMs)
+      checkTimeoutMs: Number(checkTimeoutSeconds) * 1000
     };
 
     const res = await fetch('/api/games/start', {
@@ -75,22 +73,10 @@ export default function HomePage() {
 
     const created = json as CreateGameResponse;
     setSession(created.gameId, created.playerToken, created.side);
-    setGamePath(`/game/${created.gameId}`);
-    setJoinLink(new URL(created.joinLink, window.location.origin).toString());
+    const inviteLink = new URL(created.joinLink, window.location.origin).toString();
+    setInviteLink(created.gameId, inviteLink);
     setResponse(JSON.stringify(created, null, 2));
-  }
-
-  async function handleCopyJoinLink() {
-    if (!joinLink) {
-      return;
-    }
-
-    try {
-      await navigator.clipboard.writeText(joinLink);
-      setCopyStatus('Join link copied.');
-    } catch {
-      setCopyStatus('Could not copy link. Please copy manually.');
-    }
+    window.location.assign(`/game/${created.gameId}`);
   }
 
   return (
@@ -125,37 +111,27 @@ export default function HomePage() {
           </>
         ) : null}
 
-        <label htmlFor="checkTimeoutMs">Check timeout (milliseconds)</label>
-        <input
-          id="checkTimeoutMs"
-          type="number"
-          min={500}
-          max={30000}
-          step={100}
-          value={checkTimeoutMs}
-          onChange={(event) => setCheckTimeoutMs(event.target.value)}
-        />
+        <label htmlFor="checkTimeoutSeconds">Check timeout</label>
+        <select
+          id="checkTimeoutSeconds"
+          value={checkTimeoutSeconds}
+          onChange={(event) => setCheckTimeoutSeconds(event.target.value)}
+        >
+          <option value="2">2 seconds</option>
+          <option value="3">3 seconds</option>
+          <option value="4">4 seconds</option>
+          <option value="5">5 seconds</option>
+          <option value="6">6 seconds</option>
+          <option value="7">7 seconds</option>
+          <option value="8">8 seconds</option>
+          <option value="9">9 seconds</option>
+          <option value="10">10 seconds</option>
+        </select>
 
         <button type="button" onClick={handleCreateGame}>
           Start game
         </button>
 
-        {gamePath ? (
-          <p>
-            Host session saved. Open game: <a href={gamePath}>{gamePath}</a>
-          </p>
-        ) : null}
-        {joinLink ? (
-          <>
-            <p>
-              Share this link with opponent: <a href={joinLink}>{joinLink}</a>
-            </p>
-            <button type="button" onClick={handleCopyJoinLink}>
-              Copy join link
-            </button>
-          </>
-        ) : null}
-        {copyStatus ? <p>{copyStatus}</p> : null}
         {error ? <p>{error}</p> : null}
         {response ? <pre>{response}</pre> : null}
       </div>
