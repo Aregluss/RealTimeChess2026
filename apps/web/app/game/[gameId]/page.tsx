@@ -75,6 +75,21 @@ function getCooldownRatio(piece: Piece, state: GameState, nowMs: number): number
   return Math.max(0, Math.min(1, (until - nowMs) / total));
 }
 
+function getCheckTimerProgress(state: GameState, side: Side, nowMs: number): number {
+  const checkSinceMs =
+    side === 'white'
+      ? state.checkTimers.whiteInCheckSinceMs
+      : state.checkTimers.blackInCheckSinceMs;
+
+  if (checkSinceMs === null) {
+    return 0;
+  }
+
+  const elapsedMs = Math.max(0, nowMs - checkSinceMs);
+  const timeoutMs = Math.max(1, state.rules.checkTimeoutMs);
+  return Math.max(0, Math.min(1, elapsedMs / timeoutMs));
+}
+
 function extractMoveErrorCode(message: string): string {
   if (message.startsWith('COOLDOWN_ACTIVE')) {
     return 'COOLDOWN_ACTIVE';
@@ -596,6 +611,15 @@ export default function GamePage() {
               const isBlackKingInCheck =
                 Boolean(state?.checkState.blackInCheck) && blackKingSquare === square;
               const isInCheckSquare = isWhiteKingInCheck || isBlackKingInCheck;
+              const checkSide: Side | null = isWhiteKingInCheck
+                ? 'white'
+                : isBlackKingInCheck
+                  ? 'black'
+                  : null;
+              const checkTimerProgress =
+                checkSide && state ? getCheckTimerProgress(state, checkSide, nowMs) : 0;
+              const checkTimerRemaining = Math.max(0, Math.min(100, 100 - checkTimerProgress * 100));
+              const showCheckTimer = Boolean(checkSide && checkTimerProgress > 0);
               const isIllegalFlashSquare = illegalFlashSquare === square;
               const illegalClass = isIllegalFlashSquare
                 ? illegalFlashType === 'king'
@@ -632,6 +656,24 @@ export default function GamePage() {
                         strokeLinejoin="round"
                         pathLength="100"
                         strokeDasharray={`${cooldownProgress} 100`}
+                      />
+                    </svg>
+                  ) : null}
+                  {showCheckTimer ? (
+                    <svg
+                      className={`check-timer-rect ${isInCheckSquare ? 'check-timer-flash' : ''}`}
+                      viewBox="0 0 100 100"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M50 5 H95 V95 H5 V5 H50"
+                        fill="none"
+                        stroke="rgba(231, 76, 60, 0.98)"
+                        strokeWidth="8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        pathLength="100"
+                        strokeDasharray={`${checkTimerRemaining} 100`}
                       />
                     </svg>
                   ) : null}

@@ -205,6 +205,31 @@ a {
   transform: translateZ(0);
 }
 
+.check-timer-rect {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  transform: translateZ(0);
+}
+
+.check-timer-flash {
+  animation: check-timer-pulse 1s linear infinite;
+}
+
+@keyframes check-timer-pulse {
+  0% {
+    opacity: 1;
+  }
+  45% {
+    opacity: 0.45;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
 .finish-overlay {
   position: absolute;
   inset: 0;
