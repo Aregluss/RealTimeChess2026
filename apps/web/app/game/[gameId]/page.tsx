@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import type { GameState, Piece, Side } from '@realtimechess/shared-types';
 
@@ -11,6 +11,12 @@ type Session = {
 
 const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const;
 const ranks = ['8', '7', '6', '5', '4', '3', '2', '1'] as const;
+const SOUND_FILES = {
+  moveSelf: '/audio/move-self.mp3',
+  moveEnemy: '/audio/move-opponent.mp3',
+  capture: '/audio/capture.mp3',
+  check: '/audio/move-check.mp3'
+} as const;
 
 function pieceSymbol(piece: Piece): string {
   const key = `${piece.side}:${piece.type}`;
@@ -78,6 +84,31 @@ export default function GamePage() {
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
   const [busy, setBusy] = useState<boolean>(false);
   const [nowMs, setNowMs] = useState<number>(Date.now());
+  const previousStateRef = useRef<GameState | null>(null);
+  const pendingOwnMoveVersionRef = useRef<number | null>(null);
+  const audioRef = useRef<{
+    moveSelf: HTMLAudioElement | null;
+    moveEnemy: HTMLAudioElement | null;
+    capture: HTMLAudioElement | null;
+    check: HTMLAudioElement | null;
+  }>({
+    moveSelf: null,
+    moveEnemy: null,
+    capture: null,
+    check: null
+  });
+
+  const playSound = useCallback((name: keyof typeof SOUND_FILES): void => {
+    const player = audioRef.current[name];
+    if (!player) {
+      return;
+    }
+
+    player.currentTime = 0;
+    void player.play().catch(() => {
+      // Ignore autoplay restrictions and missing/invalid asset errors.
+    });
+  }, []);
 
   useEffect(() => {
     if (!gameId) {
@@ -102,6 +133,35 @@ export default function GamePage() {
     frameId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frameId);
   }, [state?.status]);
+
+  useEffect(() => {
+    audioRef.current.moveSelf = new Audio(SOUND_FILES.moveSelf);
+    audioRef.current.moveEnemy = new Audio(SOUND_FILES.moveEnemy);
+    audioRef.current.capture = new Audio(SOUND_FILES.capture);
+    audioRef.current.check = new Audio(SOUND_FILES.check);
+
+    for (const player of Object.values(audioRef.current)) {
+      if (!player) {
+        continue;
+      }
+      player.preload = 'auto';
+      player.volume = 0.9;
+    }
+
+    return () => {
+      for (const player of Object.values(audioRef.current)) {
+        if (!player) {
+          continue;
+        }
+        player.pause();
+        player.src = '';
+      }
+      audioRef.current.moveSelf = null;
+      audioRef.current.moveEnemy = null;
+      audioRef.current.capture = null;
+      audioRef.current.check = null;
+    };
+  }, []);
 
   useEffect(() => {
     if (!gameId) {
@@ -152,6 +212,49 @@ export default function GamePage() {
     };
   }, [gameId]);
 
+  useEffect(() => {
+    if (!state) {
+      return;
+    }
+
+    const previous = previousStateRef.current;
+    previousStateRef.current = state;
+
+    if (!previous || !session) {
+      return;
+    }
+
+    if (state.version <= previous.version) {
+      return;
+    }
+
+    const pendingOwnMoveVersion = pendingOwnMoveVersionRef.current;
+    const isOwnMove = pendingOwnMoveVersion === state.version;
+    if (pendingOwnMoveVersion !== null && state.version >= pendingOwnMoveVersion) {
+      pendingOwnMoveVersionRef.current = null;
+    }
+
+    const isCapture = state.board.pieces.length < previous.board.pieces.length;
+    if (isCapture) {
+      playSound('capture');
+    } else if (isOwnMove) {
+      playSound('moveSelf');
+    } else {
+      playSound('moveEnemy');
+    }
+
+    const wasInCheck =
+      session.side === 'white'
+        ? previous.checkState.whiteInCheck
+        : previous.checkState.blackInCheck;
+    const isNowInCheck =
+      session.side === 'white' ? state.checkState.whiteInCheck : state.checkState.blackInCheck;
+
+    if (!wasInCheck && isNowInCheck) {
+      playSound('check');
+    }
+  }, [playSound, session, state]);
+
   const boardIndex = useMemo(() => {
     const index = new Map<string, Piece>();
     for (const piece of state?.board.pieces ?? []) {
@@ -177,6 +280,7 @@ export default function GamePage() {
 
     setBusy(true);
     try {
+      pendingOwnMoveVersionRef.current = state.version + 1;
       const res = await fetch(`/api/games/${gameId}/move`, {
         method: 'POST',
         headers: {
@@ -192,6 +296,7 @@ export default function GamePage() {
 
       const json = await res.json();
       if (!res.ok) {
+        pendingOwnMoveVersionRef.current = null;
         setError(json.error ?? 'Move rejected');
         return;
       }
