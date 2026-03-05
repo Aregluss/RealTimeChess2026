@@ -138,6 +138,29 @@ a {
   z-index: 2;
 }
 
+.piece {
+  font-family: 'Noto Sans Symbols 2', 'Segoe UI Symbol', 'Apple Symbols',
+    'Arial Unicode MS', sans-serif;
+  font-size: 1em;
+  line-height: 1;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
+}
+
+.piece-white {
+  color: #f8f9fb;
+  text-shadow:
+    0 0 1px rgba(0, 0, 0, 0.85),
+    0 0 4px rgba(0, 0, 0, 0.55);
+}
+
+.piece-black {
+  color: #0f1218;
+  text-shadow:
+    0 0 1px rgba(255, 255, 255, 0.5),
+    0 0 4px rgba(255, 255, 255, 0.2);
+}
+
 .square .coord {
   position: absolute;
   left: 4px;

@@ -36,7 +36,7 @@ function pieceSymbol(piece: Piece): string {
     'black:pawn': '♟'
   };
 
-  return symbols[key] ?? '?';
+  return `${symbols[key] ?? '?'}\uFE0E`;
 }
 
 function loadSession(gameId: string): Session | null {
@@ -277,22 +277,24 @@ export default function GamePage() {
 
   useEffect(() => {
     if (!state || !session) {
-      setPregameLabel('');
-      return;
-    }
-
-    const isGameStarted = state.status === 'ACTIVE' && Boolean(state.players.black);
-    if (!isGameStarted) {
       gameStartSignalMsRef.current = null;
       setPregameLabel('');
       return;
     }
 
-    const startMs = state.lastStateChangeAtServerMs;
-    if (gameStartSignalMsRef.current !== startMs) {
-      gameStartSignalMsRef.current = startMs;
+    const shouldRunPregame =
+      state.status === 'ACTIVE' && Boolean(state.players.black) && state.version === 2;
+    if (!shouldRunPregame) {
+      gameStartSignalMsRef.current = null;
+      setPregameLabel('');
+      return;
+    }
+
+    if (gameStartSignalMsRef.current === null) {
+      gameStartSignalMsRef.current = Date.now();
       playSound('gameStart');
     }
+    const startMs = gameStartSignalMsRef.current;
 
     const updateCountdown = () => {
       const elapsedMs = Date.now() - startMs;
@@ -318,7 +320,7 @@ export default function GamePage() {
     updateCountdown();
     const timer = window.setInterval(updateCountdown, 100);
     return () => window.clearInterval(timer);
-  }, [playSound, session, state]);
+  }, [playSound, session, state?.players.black, state?.status, state?.version]);
 
   async function handleCopyInvite(): Promise<void> {
     if (!inviteLink) {
@@ -532,7 +534,9 @@ export default function GamePage() {
                       />
                     </svg>
                   ) : null}
-                  <span className="piece">{piece ? pieceSymbol(piece) : ''}</span>
+                  <span className={`piece ${piece ? `piece-${piece.side}` : ''}`}>
+                    {piece ? pieceSymbol(piece) : ''}
+                  </span>
                   <span className="coord">{square}</span>
                 </button>
               );
