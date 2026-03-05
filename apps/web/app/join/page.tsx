@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import { useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import type { JoinGameRequest, JoinGameResponse } from '@realtimechess/shared-types';
@@ -27,7 +27,7 @@ function getSession(gameId: string): LocalSession | null {
   }
 }
 
-export default function JoinPage() {
+function JoinPageContent() {
   const searchParams = useSearchParams();
   const [gameId, setGameId] = useState('');
   const [joinCode, setJoinCode] = useState('');
@@ -113,5 +113,13 @@ export default function JoinPage() {
         {response ? <pre>{response}</pre> : null}
       </div>
     </main>
+  );
+}
+
+export default function JoinPage() {
+  return (
+    <Suspense fallback={<main><h1>Join Game</h1></main>}>
+      <JoinPageContent />
+    </Suspense>
   );
 }

@@ -124,6 +124,10 @@ async function emitStateEvent(type: GameEventPayload['type'], state: GameState):
   await publishGameEvent(payload);
 }
 
+function eventTypeForState(state: GameState): GameEventPayload['type'] {
+  return state.status === 'FINISHED' ? 'game.finished' : 'state.updated';
+}
+
 function updateCheckStateAndTerminals(state: GameState, nowMs: number): boolean {
   let changed = false;
 
@@ -343,10 +347,7 @@ export async function getGameState(gameId: string): Promise<GameState> {
     const changed = updateCheckStateAndTerminals(record.state, nowMs);
     if (changed) {
       await saveRecord(record, nowMs);
-      await emitStateEvent(
-        record.state.status === 'FINISHED' ? 'game.finished' : 'state.updated',
-        record.state
-      );
+      await emitStateEvent(eventTypeForState(record.state), record.state);
     }
   }
 
@@ -425,10 +426,7 @@ export async function submitMove(
   updateCheckStateAndTerminals(record.state, nowMs);
 
   await saveRecord(record, nowMs);
-  await emitStateEvent(
-    record.state.status === 'FINISHED' ? 'game.finished' : 'state.updated',
-    record.state
-  );
+  await emitStateEvent(eventTypeForState(record.state), record.state);
 
   return {
     accepted: true,
