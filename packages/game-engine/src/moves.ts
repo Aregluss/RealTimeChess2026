@@ -77,6 +77,10 @@ function isMovePatternLegal(piece: Piece, board: BoardState, to: Square): boolea
   if (targetPiece?.side === piece.side) {
     return false;
   }
+  // A king may not be captured; check/checkmate should end the game instead.
+  if (targetPiece?.type === 'king') {
+    return false;
+  }
 
   switch (piece.type) {
     case 'pawn': {

@@ -130,6 +130,28 @@ function eventTypeForState(state: GameState): GameEventPayload['type'] {
 
 function updateCheckStateAndTerminals(state: GameState, nowMs: number): boolean {
   let changed = false;
+  const whiteKingAlive = state.board.pieces.some(
+    (piece) => piece.side === 'white' && piece.type === 'king'
+  );
+  const blackKingAlive = state.board.pieces.some(
+    (piece) => piece.side === 'black' && piece.type === 'king'
+  );
+
+  if (!whiteKingAlive && blackKingAlive) {
+    state.status = 'FINISHED';
+    state.winner = 'black';
+    state.finishReason = 'KING_CAPTURE';
+    state.finishedAtServerMs = nowMs;
+    return true;
+  }
+
+  if (!blackKingAlive && whiteKingAlive) {
+    state.status = 'FINISHED';
+    state.winner = 'white';
+    state.finishReason = 'KING_CAPTURE';
+    state.finishedAtServerMs = nowMs;
+    return true;
+  }
 
   const whiteInCheck = isKingInCheck(state.board, 'white');
   const blackInCheck = isKingInCheck(state.board, 'black');
