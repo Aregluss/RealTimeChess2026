@@ -157,6 +157,7 @@ export default function GamePage() {
   const gameStartSignalMsRef = useRef<number | null>(null);
   const illegalFlashTimerRef = useRef<number | null>(null);
   const illegalFlashRafRef = useRef<number | null>(null);
+  const latestStatusRef = useRef<GameState['status'] | null>(null);
   const audioRef = useRef<{
     gameStart: HTMLAudioElement | null;
     moveSelf: HTMLAudioElement | null;
@@ -184,6 +185,10 @@ export default function GamePage() {
       // Ignore autoplay restrictions and missing/invalid asset errors.
     });
   }, []);
+
+  useEffect(() => {
+    latestStatusRef.current = state?.status ?? null;
+  }, [state?.status]);
 
   useEffect(() => {
     if (!gameId) {
@@ -282,6 +287,11 @@ export default function GamePage() {
     const loadState = async (
       source: 'initial' | 'poll' | 'visibility' | 'sse-error'
     ): Promise<void> => {
+      if (latestStatusRef.current === 'FINISHED' && source === 'poll') {
+        clearPolling();
+        return;
+      }
+
       try {
         const res = await fetch(`/api/games/${gameId}/state`);
         const json = (await res.json()) as GameState | { error?: string };
@@ -296,6 +306,10 @@ export default function GamePage() {
         }
 
         setState(json as GameState);
+        latestStatusRef.current = (json as GameState).status;
+        if (latestStatusRef.current === 'FINISHED') {
+          clearPolling();
+        }
         setError('');
         if (source !== 'poll') {
           logClient('state_loaded', { gameId, source });
@@ -309,9 +323,18 @@ export default function GamePage() {
     };
 
     const schedulePolling = () => {
+      if (latestStatusRef.current === 'FINISHED') {
+        clearPolling();
+        return;
+      }
+
       clearPolling();
       const intervalMs = document.hidden ? POLL_INTERVAL_HIDDEN_MS : POLL_INTERVAL_ACTIVE_MS;
       pollHandle = window.setInterval(() => {
+        if (latestStatusRef.current === 'FINISHED') {
+          clearPolling();
+          return;
+        }
         if (!sseConnected) {
           void loadState('poll');
         }
@@ -346,6 +369,10 @@ export default function GamePage() {
         try {
           const payload = JSON.parse((event as MessageEvent<string>).data) as GameState;
           setState(payload);
+          latestStatusRef.current = payload.status;
+          if (latestStatusRef.current === 'FINISHED') {
+            clearPolling();
+          }
           setError('');
           setRealtimeMode('sse');
         } catch {
